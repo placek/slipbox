@@ -1,0 +1,23 @@
+# Optional dependencies of the slipbox plugin's semantic layer.
+#
+# The plugin substrate — folgezettel, notes, git, index.md, the CARP lifecycle —
+# is pure standard library and needs NOTHING here; the smoke tests run on a bare
+# interpreter. Install these into the environment hermes loads the plugin from
+# only where the semantic layer actually does work; without them the store still
+# captures, adapts, reviews, persists and greps, and lookup degrades gracefully.
+
+# Single-file vector index (whitepaper §"Semantic layer"). Optional: without it
+# the store falls back to a pure-python brute-force cosine scan.
+sqlite-vec>=0.1.3
+
+# In-process models — the embedder and reranker of the whitepaper. Heavy; install
+# only where the plugin actually does semantic work.
+#   embedder : BAAI/bge-m3            (multilingual dense 1024-dim vectors)
+#   reranker : BAAI/bge-reranker-v2-m3 (cross-encoder probe/shortlist scorer)
+FlagEmbedding>=1.2.10
+torch>=2.1
+
+# Generative judge loader — the headless in-process fallback only. In the normal
+# hermes deployment the host agent is the judge, so this is optional.
+transformers>=4.40
+bitsandbytes>=0.43        # NF4 quantisation of the ~24B judge

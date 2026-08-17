@@ -1,0 +1,73 @@
+name: slipbox
+version: 0.1.0
+description: >-
+  A curated, agent-operated knowledge base for hermes-agent. The CARP write path
+  (capture → adapt → review → persist) distils unstructured sources into atomic,
+  human-reviewed notes placed in a Folgezettel store under git; retrieval is one
+  shared four-layer mechanism (structural, positional, semantic, lexical) over an
+  in-process bge-m3 + sqlite-vec index with a reranker-scored bisection. Skills
+  drive the flows, deterministic tools do the mechanics, three scheduled jobs run
+  the automation. Every content change is committed.
+author: Paweł Płaczyński
+provides_tools:
+  # read-only
+  - slipbox_show
+  - slipbox_lookup
+  - slipbox_inbox
+  - slipbox_stage
+  - slipbox_sources
+  - slipbox_store
+  - slipbox_tree
+  - slipbox_backlinks
+  - slipbox_index
+  - slipbox_original
+  - slipbox_status
+  - slipbox_log
+  - slipbox_schedule
+  # interactive read path (registered only when SLIPBOX_SEMANTIC is on)
+  - slipbox_search
+  - slipbox_quote
+  # writing — the CARP mechanics
+  - slipbox_capture
+  - slipbox_source
+  - slipbox_atom
+  - slipbox_scope
+  - slipbox_move_attachments
+  - slipbox_archive_original
+  - slipbox_drop_inbox
+  - slipbox_review
+  - slipbox_persist
+  - slipbox_index_add
+  - slipbox_index_write
+  - slipbox_purge_rejected
+  - slipbox_reindex
+provides_skills:
+  # CARP write path + read path
+  - capture
+  - adapt
+  - review
+  - link      # alias: persist
+  - search
+  # higher-level workflows
+  - triage        # sweep the whole inbox backlog (interactive auto-adapt)
+  - readapt       # re-extract additional atoms from a source's archived original
+  - consolidate   # maintain the topic-map / bookmark hierarchy
+  - oversight     # admin domain-drift oversight from scope statistics
+provides_hooks:
+  - on_session_start
+  - on_session_end
+scheduled_jobs:
+  # The host cron fires these; the plugin only reports their state
+  # (slipbox_schedule). Commands do the deterministic work.
+  - name: auto-adapt
+    schedule: "0 22 * * *"
+    description: Distil inbox entries into staged atoms (drives the adapt skill per note).
+  - name: persist
+    schedule: "0 3 * * *"
+    command: "slipbox persist-accepted"
+    single_instance: true
+    description: Persist accepted atoms with a decided placement; purge rejected.
+  - name: digest
+    schedule: "0 7 * * *"
+    command: "slipbox digest"
+    description: The morning digest — backlog per contributor and pending review.

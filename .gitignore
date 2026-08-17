@@ -1,0 +1,11 @@
+# Derived artefacts — rebuildable from the markdown, never the source of truth.
+embeddings.db
+embeddings.db-*
+.slipbox-locks/
+
+# Python
+__pycache__/
+*.pyc
+.venv
+.venv/
+*.egg-info/
