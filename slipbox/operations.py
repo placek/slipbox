@@ -341,6 +341,7 @@ def status(root: Path | None = None) -> dict:
 
     ages = [e["age_days"] for e in inbox_data["entries"]] or [0]
     return {
+        "root": str(root),
         "inbox": {
             "count": inbox_data["count"],
             "by_captured_by": by_capturer,

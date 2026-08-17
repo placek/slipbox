@@ -54,6 +54,7 @@ def _render_status(data: dict) -> str:
     inbox = data["inbox"]
     stage = data["stage"]
     lines = [
+        f"repo: {data['root']}",
         f"inbox: {inbox['count']} (oldest {inbox['oldest_days']}d)",
         "  " + ", ".join(f"{k}: {v}" for k, v in sorted(inbox["by_captured_by"].items()))
         if inbox["by_captured_by"] else "  —",
