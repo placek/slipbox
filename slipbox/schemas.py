@@ -230,6 +230,19 @@ SLIPBOX_QUOTE = {
 
 # --- Writing -----------------------------------------------------------------
 
+SLIPBOX_SETUP = {
+    "name": "slipbox_setup",
+    "description": (
+        "Initialize the slipbox repository (first-run setup): create the inbox/ "
+        "stage/ store/ source/ layout, seed an empty index.md topic map and the "
+        "SOUL.md domain charter, and initialize embeddings.db. Idempotent — creates "
+        "only what is missing and never overwrites an existing index.md / SOUL.md, "
+        "so it is safe to re-run. Runs automatically on the first session; call it "
+        "explicitly to repair a partially-created repository. Commits."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
 SLIPBOX_CAPTURE = {
     "name": "slipbox_capture",
     "description": (
@@ -597,7 +610,7 @@ READ_ONLY = (
 GATED = (SLIPBOX_SEARCH, SLIPBOX_QUOTE)
 
 WRITING = (
-    SLIPBOX_CAPTURE, SLIPBOX_SOURCE, SLIPBOX_ATOM, SLIPBOX_SCOPE,
+    SLIPBOX_SETUP, SLIPBOX_CAPTURE, SLIPBOX_SOURCE, SLIPBOX_ATOM, SLIPBOX_SCOPE,
     SLIPBOX_MOVE_ATTACHMENTS, SLIPBOX_ARCHIVE_ORIGINAL, SLIPBOX_DROP_INBOX,
     SLIPBOX_REVIEW, SLIPBOX_PERSIST, SLIPBOX_INDEX_ADD, SLIPBOX_INDEX_WRITE,
     SLIPBOX_PURGE_REJECTED, SLIPBOX_REINDEX,

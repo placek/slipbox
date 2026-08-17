@@ -37,7 +37,7 @@ QUICK COMMANDS — instant, no LLM
   /slipbox-help              this help
 
 TERMINAL
-  slipbox {status|digest|inbox|stage|store|show|lookup|accept|reject
+  slipbox {setup|status|digest|inbox|stage|store|show|lookup|accept|reject
           |persist|persist-accepted|purge|schedule|doctor|reindex|help}
 
 RULES OF THE HOUSE
@@ -247,6 +247,8 @@ def _cli_handler(args) -> None:
     command = getattr(args, "slipbox_command", None) or "help"
     if command == "help":
         print(HELP)
+    elif command == "setup":
+        _print_json(operations.setup())
     elif command == "status":
         print(_render_status(operations.status()))
     elif command == "digest":
@@ -318,6 +320,7 @@ def doctor() -> dict:
 def setup_argparse(subparser) -> None:
     subs = subparser.add_subparsers(dest="slipbox_command")
 
+    subs.add_parser("setup", help="Initialize the repository (first-run setup)")
     subs.add_parser("status", help="Backlog counters")
     subs.add_parser("digest", help="Morning digest (scheduled job 3)")
     subs.add_parser("inbox", help="List inbox entries")

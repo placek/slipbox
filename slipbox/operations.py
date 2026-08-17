@@ -1136,3 +1136,64 @@ def reindex(full: bool = False, root: Path | None = None) -> dict:
             raise
     report["full"] = full
     return report
+
+
+# --- First-run setup ---------------------------------------------------------
+
+def is_initialized(root: Path | None = None) -> bool:
+    """Whether the repository has been set up: the CARP layout, `index.md` and
+    `embeddings.db` all present. Used to decide the automatic first-run trigger."""
+    root = _root(root)
+    return (
+        all((root / name).is_dir() for name in config.DIRECTORIES)
+        and (root / config.INDEX_FILE).is_file()
+        and (root / config.DB_FILE).exists()
+    )
+
+
+def setup(root: Path | None = None) -> dict:
+    """First-run repository setup: create the CARP layout, seed an empty `index.md`
+    topic map and the `SOUL.md` charter, and initialize `embeddings.db`.
+
+    Idempotent — only ever creates what is missing, so it is safe to re-run and
+    safe to fire automatically on the first session (`hooks.on_session_start`). An
+    existing `index.md` / `SOUL.md` is never overwritten. Ends with a commit when
+    anything was created.
+    """
+    root = _root(root)
+    created: list[str] = []
+    with locks.hold(locks.REPO, locks.DB, root=root):
+        for name in config.DIRECTORIES:
+            directory = root / name
+            if not directory.is_dir():
+                directory.mkdir(parents=True, exist_ok=True)
+                created.append(f"{name}/")
+
+        index_path = root / config.INDEX_FILE
+        if not index_path.is_file():
+            index_path.write_text(f"{indexmd.HEADING}\n", encoding="utf-8")
+            created.append(config.INDEX_FILE)
+
+        soul_path = root / config.SOUL_FILE
+        if not soul_path.is_file():
+            template = Path(__file__).resolve().parent / "templates" / config.SOUL_FILE
+            if template.is_file():
+                soul_path.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+                created.append(config.SOUL_FILE)
+
+        # Opening the store in write mode creates embeddings.db and its bookkeeping
+        # tables (no vectors — those accrue as notes are captured and adapted).
+        db_new = not (root / config.DB_FILE).exists()
+        with embeddings.Store(root):
+            pass
+        if db_new:
+            created.append(config.DB_FILE)
+
+        gitops.ensure_gitignore(root)
+        commit = gitops.commit("slipbox: initialize repository", root) if created else {}
+    return {
+        "root": str(root),
+        "created": created,
+        "already_initialized": not created,
+        "commit": commit,
+    }

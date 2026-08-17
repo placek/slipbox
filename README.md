@@ -69,6 +69,7 @@ jobs and ends in a git commit:
 
 | Stage | Tools |
 |-------|-------|
+| 0 Setup | `slipbox_setup` — create the layout, seed `index.md` / `SOUL.md`, init `embeddings.db`; idempotent, and fired automatically on the first session (`on_session_start`). |
 | 1 Capture | `slipbox_capture` |
 | 2 Adapt | `slipbox_source` · `slipbox_atom` · `slipbox_scope` · `slipbox_move_attachments` · `slipbox_archive_original` · `slipbox_drop_inbox` |
 | 3 Review | `slipbox_review` |
@@ -146,7 +147,7 @@ slipbox/
 ├── schemas.py         tool schemas (what the LLM sees)
 ├── tools.py           tool handlers ((args) -> JSON string, never raises)
 ├── commands.py        slash commands, the morning digest, the CLI
-├── hooks.py           on_session_start (freshness) / on_session_end (commit)
+├── hooks.py           on_session_start (first-run setup + freshness) / on_session_end (commit)
 ├── cronspec.py        a tiny cron parser for slipbox_schedule
 ├── plugin.yaml        the hermes-agent manifest
 ├── requirements.txt   optional semantic-layer deps (embedder, reranker, judge)

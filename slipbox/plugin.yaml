@@ -28,6 +28,7 @@ provides_tools:
   - slipbox_search
   - slipbox_quote
   # writing — the CARP mechanics
+  - slipbox_setup
   - slipbox_capture
   - slipbox_source
   - slipbox_atom

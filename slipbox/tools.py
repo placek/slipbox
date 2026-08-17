@@ -140,6 +140,10 @@ def slipbox_quote(args: dict, **_) -> str:
 
 # --- Writing -----------------------------------------------------------------
 
+def slipbox_setup(args: dict, **_) -> str:
+    return _guard("slipbox_setup", operations.setup)
+
+
 def slipbox_capture(args: dict, **_) -> str:
     return _guard("slipbox_capture", lambda: operations.capture(
         title=args.get("title", ""),
@@ -270,6 +274,7 @@ HANDLERS = {
     "slipbox_schedule": slipbox_schedule,
     "slipbox_search": slipbox_search,
     "slipbox_quote": slipbox_quote,
+    "slipbox_setup": slipbox_setup,
     "slipbox_capture": slipbox_capture,
     "slipbox_source": slipbox_source,
     "slipbox_atom": slipbox_atom,

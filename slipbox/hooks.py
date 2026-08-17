@@ -1,9 +1,10 @@
 """hermes-agent hooks.
 
-* `on_session_start` — the re-embedding trigger: compare the notes against
-  `embeddings.db` and say what drifted. It only *reports*; embedding a whole
-  repository must never block the start of a conversation. The scheduled jobs and
-  `slipbox_reindex` do the actual work.
+* `on_session_start` — first-run setup + the re-embedding trigger. On a fresh
+  repository it creates the layout, `index.md` and `embeddings.db` (cheap: no
+  embedding); then it compares the notes against `embeddings.db` and says what
+  drifted. It only *reports* drift; embedding a whole repository must never block
+  the start of a conversation. The scheduled jobs and `slipbox_reindex` do that.
 * `on_session_end` — safety net for "every content-modifying action ends with a
   commit": picks up changes made outside the write tools (manual edits, generic
   file tools). A clean tree means no commit.
@@ -15,14 +16,23 @@ from __future__ import annotations
 
 import logging
 
-from . import config, gitops, lookup
+from . import config, gitops, lookup, operations
 
 logger = logging.getLogger(__name__)
 
 
 def on_session_start(**_) -> None:
+    root = config.root()
     try:
-        report = lookup.freshness(config.root())
+        if not operations.is_initialized(root):
+            result = operations.setup(root)
+            logger.info("slipbox: initialized repository at %s (created: %s)",
+                        result["root"], ", ".join(result["created"]) or "nothing")
+    except Exception as exc:  # noqa: BLE001 - a hook must never raise
+        logger.warning("slipbox: repository setup failed: %s", exc)
+
+    try:
+        report = lookup.freshness(root)
     except Exception as exc:  # noqa: BLE001 - a hook must never raise
         logger.warning("slipbox: freshness check failed: %s", exc)
         return
