@@ -21,12 +21,16 @@ from . import commands, config, hooks, schemas, tools
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 TOOLSET = "slipbox"
 
 # `slipbox:persist` is an accepted alias of `slipbox:link` (whitepaper §"The agent").
 SKILL_ALIASES = {"link": ("persist",)}
+
+# The only skill that neither writes nor commits — the read path. In a read-only
+# deployment (`SLIPBOX_READONLY`) it is the sole skill registered.
+READONLY_SKILLS = ("search",)
 
 
 def _active_schemas() -> tuple[dict, ...]:
@@ -34,9 +38,12 @@ def _active_schemas() -> tuple[dict, ...]:
 
     The interactive read path (`slipbox_search`, `slipbox_quote`) is registered
     only when the semantic layer is enabled — the whitepaper reserves the
-    cited-summary channel for when the models are reachable.
+    cited-summary channel for when the models are reachable. A read-only
+    deployment (`SLIPBOX_READONLY`) drops the whole write group.
     """
     gated = schemas.GATED if config.semantic_enabled() else ()
+    if config.readonly():
+        return (*schemas.READ_ONLY, *gated)
     return (*schemas.READ_ONLY, *gated, *schemas.WRITING)
 
 
@@ -75,6 +82,7 @@ def register(ctx) -> None:
         except Exception as exc:  # noqa: BLE001 - an unsupported hook is not fatal
             logger.debug("slipbox: hook %s not registered (%s)", event, exc)
 
+    read_only = config.readonly()
     skills = 0
     skills_dir = Path(__file__).parent / "skills"
     if skills_dir.is_dir():
@@ -82,6 +90,8 @@ def register(ctx) -> None:
             skill_md = child / "SKILL.md"
             if not (child.is_dir() and skill_md.exists()):
                 continue
+            if read_only and child.name not in READONLY_SKILLS:
+                continue  # a read-only agent gets only the read-path skill(s)
             ctx.register_skill(child.name, skill_md)
             skills += 1
             for alias in SKILL_ALIASES.get(child.name, ()):
@@ -91,6 +101,7 @@ def register(ctx) -> None:
                     logger.debug("slipbox: alias %s not registered (%s)", alias, exc)
 
     logger.info(
-        "Plugin slipbox %s: %d tools, %d commands, %d skills.",
-        __version__, registered, len(commands.COMMANDS), skills,
+        "Plugin slipbox %s%s: %d tools, %d commands, %d skills.",
+        __version__, " (read-only)" if read_only else "",
+        registered, len(commands.COMMANDS), skills,
     )

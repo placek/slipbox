@@ -215,6 +215,17 @@ def doc_prefix() -> str:
     return os.environ.get("SLIPBOX_DOC_PREFIX", "")
 
 
+def readonly() -> bool:
+    """Expose only the read surface — the read-only tools, the `slipbox_search` /
+    `slipbox_quote` read path, and the `search` skill — with every write tool and
+    write skill withheld and the setup/commit hooks disabled.
+
+    Set per profile (`SLIPBOX_READONLY=1`) so one agent can query a store it must
+    not modify, while another (or the scheduled jobs) does the writing.
+    """
+    return _bool("SLIPBOX_READONLY", False)
+
+
 def semantic_enabled() -> bool:
     """Whether the model-gated read path (`slipbox_search`, `slipbox_quote`) is on.
 

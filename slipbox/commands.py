@@ -285,10 +285,21 @@ def _run_job(command: str, args, root) -> None:
         _print_json(doctor(root))
 
 
+# CLI subcommands that only read — the surface a read-only deployment keeps.
+_READONLY_CLI = frozenset({
+    "status", "inbox", "stage", "store", "show", "lookup",
+    "digest", "schedule", "doctor", "help",
+})
+
+
 def _cli_handler(args) -> None:
     command = getattr(args, "slipbox_command", None) or "help"
     if command in ("help", None):
         print(HELP)
+        return
+
+    if config.readonly() and command not in _READONLY_CLI:
+        print(f"slipbox is read-only (SLIPBOX_READONLY set); '{command}' is disabled.")
         return
 
     # Setup + scheduled jobs loop over every configured repo (separate lock,

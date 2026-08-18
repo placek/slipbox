@@ -143,6 +143,15 @@ jobs and the session hooks loop over every configured repo (`slipbox <job> --rep
 <name>` targets one). With `SLIPBOX_REPOS` unset the plugin stays single-repo
 (`$SLIPBOX_REPO`), unchanged.
 
+### Read-only agents
+
+Set `SLIPBOX_READONLY=1` (per profile) and the plugin exposes only its **read
+surface** — the read-only tools plus the `slipbox_search` / `slipbox_quote` read
+path and the `search` skill. Every write tool and write skill is withheld, the
+write CLI subcommands are refused, and the setup/commit hooks are disabled (the
+freshness report still runs). So one agent can query a store it must not modify
+while another instance — or the scheduled jobs — does the writing.
+
 ## Layout of this package
 
 ```
@@ -194,7 +203,7 @@ pip install -r slipbox/requirements.txt
 `setup-hermes-profile.sh` does all of this against a throwaway profile.
 
 Key environment variables (all optional, sane defaults): `SLIPBOX_REPO`,
-`SLIPBOX_REPOS` (multi-repo; the first entry is the default),
+`SLIPBOX_REPOS` (multi-repo; the first entry is the default), `SLIPBOX_READONLY`,
 `SLIPBOX_DEVICE`, `SLIPBOX_SEMANTIC`, `SLIPBOX_EMBED_MODEL`, `SLIPBOX_RERANK_MODEL`,
 `SLIPBOX_JUDGE_MODEL`, `SLIPBOX_WINDOW`, `SLIPBOX_PROBE_BUDGET`,
 `SLIPBOX_DUPLICATE_DISTANCE`, `SLIPBOX_PENDING_WARN`, `SLIPBOX_CRON_*`. See

@@ -316,3 +316,20 @@ def test_tools_route_and_isolate_by_repo(tmp_path, monkeypatch):
 
     # an unknown repo is a clean error, never a crash
     assert "error" in json.loads(tools.slipbox_inbox({"repo": "ghost"}))
+
+
+def test_readonly_registers_only_the_read_surface(monkeypatch):
+    import slipbox
+
+    monkeypatch.setenv("SLIPBOX_READONLY", "1")
+    names = {s["name"] for s in slipbox._active_schemas()}
+    # reads + the search/quote read path are present…
+    assert {"slipbox_show", "slipbox_lookup", "slipbox_search", "slipbox_quote"} <= names
+    # …and every write tool is withheld.
+    for w in ("slipbox_capture", "slipbox_atom", "slipbox_persist", "slipbox_reindex", "slipbox_setup"):
+        assert w not in names
+    # `search` is the only read-only skill.
+    assert slipbox.READONLY_SKILLS == ("search",)
+
+    monkeypatch.delenv("SLIPBOX_READONLY")
+    assert "slipbox_capture" in {s["name"] for s in slipbox._active_schemas()}
