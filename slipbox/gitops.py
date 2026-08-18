@@ -43,7 +43,7 @@ def ensure_gitignore(root: Path) -> bool:
 
 def commit(message: str, root: Path | None = None) -> dict:
     """Commit everything in the working tree. Idempotent: no changes, no commit."""
-    root = root or config.root()
+    root = root or config.repo_root(None)
     if not config.autocommit():
         return {"committed": False, "reason": "autocommit disabled (SLIPBOX_AUTOCOMMIT=0)"}
     if not is_repo(root):
@@ -66,7 +66,7 @@ def commit(message: str, root: Path | None = None) -> dict:
 
 def history(relative_path: str, root: Path | None = None, limit: int = 20) -> list[dict]:
     """Commits touching a path, newest first — follows renames (`stage/` → `store/`)."""
-    root = root or config.root()
+    root = root or config.repo_root(None)
     if not is_repo(root):
         return []
     result = _git(

@@ -169,7 +169,7 @@ def vector_search(root: Path, vector, spaces, k=None, max_distance=None) -> tupl
 
 def freshness(root: Path | None = None) -> dict:
     """How far `embeddings.db` has drifted from the notes on disk."""
-    root = root or config.root()
+    root = root or config.repo_root(None)
     report = {"missing": 0, "changed": 0, "orphaned": 0, "indexed": 0, "notes": 0}
     try:
         store = embeddings.Store(root, readonly=True)
@@ -207,7 +207,7 @@ def lookup(query: str, spaces=None, root: Path | None = None, *, vector=None,
     `vector` short-circuits the query embedding — placement (`slipbox:link`)
     passes the atom's ready-made `vec_stage` vector instead of recomputing it.
     """
-    root = root or config.root()
+    root = root or config.repo_root(None)
     spaces = tuple(spaces or (config.SPACE_STORE,))
     limit = config.candidate_limit() if limit is None else limit
     query = (query or "").strip()

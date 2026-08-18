@@ -138,7 +138,7 @@ class Store:
     """`embeddings.db` — bookkeeping plus one vector table per space."""
 
     def __init__(self, root: Path | None = None, readonly: bool = False):
-        self.root = root or config.root()
+        self.root = root or config.repo_root(None)
         self.path = self.root / config.DB_FILE
         self.readonly = readonly
         if readonly:
@@ -426,7 +426,7 @@ def sync(root: Path | None = None, spaces=None, full: bool = False) -> dict:
     clone (empty database) therefore rebuilds itself; `full=True` forces a
     rebuild from scratch, which is what a model change requires.
     """
-    root = root or config.root()
+    root = root or config.repo_root(None)
     spaces = tuple(spaces or config.SPACES)
     report: dict = {"backend": None, "spaces": {}, "embedded": 0, "removed": 0,
                     "unchanged": 0, "failed": 0}

@@ -34,7 +34,7 @@ class LockBusy(RuntimeError):
 
 
 def _lock_path(name: str, root: Path | None = None) -> Path:
-    base = (root or config.root()) / config.LOCK_DIR
+    base = (root or config.repo_root(None)) / config.LOCK_DIR
     base.mkdir(parents=True, exist_ok=True)
     return base / f"{name}.lock"
 
