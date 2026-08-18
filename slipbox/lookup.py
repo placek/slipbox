@@ -218,8 +218,13 @@ def lookup(query: str, spaces=None, root: Path | None = None, *, vector=None,
     if use_index and query and config.SPACE_STORE in spaces:
         starts = indexmd.entry_ids(root, query)
 
-    # Step 2 — positional: bisection from those entry notes.
+    # Step 2 — positional: bisection from those entry notes. The probe judge is
+    # the reranker when it can score, token overlap otherwise (reported below).
     bisected = bisect(root, query, starts, window) if starts else []
+    positional_scorer = (
+        ("reranker" if models.reranker_available() else "token-overlap")
+        if starts else None
+    )
 
     # Step 3 — semantic: global k-NN per space, never trimmed to step 1.
     hits: list[dict] = []
@@ -272,6 +277,10 @@ def lookup(query: str, spaces=None, root: Path | None = None, *, vector=None,
             "positional": [c["key"] for c in bisected],
             "semantic": [h["key"] for h in hits],
         },
+        # Which models actually ran: the embedder (semantic k-NN) unless degraded,
+        # and the reranker vs token-overlap in the positional probe.
+        "positional_scorer": positional_scorer,
+        "semantic_scorer": None if (vector is None and degraded) else "bge-m3",
         "candidates": enriched[:limit],
         "count": min(len(enriched), limit),
         "truncated": truncated,

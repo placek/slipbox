@@ -19,5 +19,9 @@ torch>=2.1
 
 # Generative judge loader — the headless in-process fallback only. In the normal
 # hermes deployment the host agent is the judge, so this is optional.
-transformers>=4.40
+#
+# Pinned below 5: transformers 5.x removed the slow-tokenizer `prepare_for_model`
+# API that FlagEmbedding's reranker (bge-reranker-v2-m3) calls, so the reranker
+# loads but throws at score time on 5.x. 4.x keeps both embedder and reranker.
+transformers>=4.40,<5
 bitsandbytes>=0.43        # NF4 quantisation of the ~24B judge

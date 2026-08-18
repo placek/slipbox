@@ -37,6 +37,7 @@ class ModelUnavailable(RuntimeError):
 _LOCK = threading.Lock()
 _EMBEDDER = None
 _RERANKER = None
+_RERANKER_OK: bool | None = None  # cached score-probe result (None = not yet probed)
 _JUDGE = None
 
 
@@ -114,11 +115,29 @@ def rerank_scores(query: str, documents: list[str]) -> list[float]:
 
 
 def reranker_available() -> bool:
+    """Whether the reranker can actually SCORE — not merely load.
+
+    A cross-encoder that constructs but throws at score time (e.g. a
+    FlagEmbedding × transformers version clash) must report unavailable, so the
+    positional layer falls back to token overlap instead of crashing the lookup.
+    The probe runs once per process and the boolean is cached, so this stays
+    cheap on the hot lookup path.
+    """
+    global _RERANKER_OK
+    if _RERANKER_OK is not None:
+        return _RERANKER_OK
     try:
-        reranker()
-        return True
+        rerank_scores("ping", ["pong"])
+        _RERANKER_OK = True
     except ModelUnavailable:
-        return False
+        _RERANKER_OK = False
+    except Exception as exc:  # noqa: BLE001 - a broken reranker is an unavailable one
+        logger.warning(
+            "slipbox: reranker %s loaded but cannot score (%s) — using token overlap",
+            config.reranker_model(), exc,
+        )
+        _RERANKER_OK = False
+    return _RERANKER_OK
 
 
 # --- Generative judge --------------------------------------------------------
