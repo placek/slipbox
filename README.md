@@ -20,9 +20,9 @@ capture ─▶ inbox/ ─── adapt ──▶ stage/ ─── review ──�
 | Stage | Skill | What happens |
 |-------|-------|--------------|
 | 1 Capture | `slipbox:capture` | Raw material lands in `inbox/` verbatim, with attribution. |
-| 2 Adapt | `slipbox:adapt` | Split into one-idea atoms in `stage/`; embed at once; scope-classify; cache placement; archive the original into cold storage. |
+| 2 Adapt | `slipbox:adapt` | Split into one-idea atoms in `stage/`, each assigned its **proposed Folgezettel ID** (which also names the file) from the placement lookup; embed at once; scope-classify; cache placement; archive the original into cold storage. |
 | 3 Review | `slipbox:review` | The human quality gate — accept/reject whole per-source batches; shape titles, placement, duplicates. |
-| 4 Persist | `slipbox:link` (alias `persist`) | Accepted atoms get a fresh Folgezettel ID and enter `store/`, immutable forever. |
+| 4 Persist | `slipbox:link` (alias `persist`) | Accepted atoms are **moved** into `store/` under the ID assigned at adapt (a human override re-derives it), immutable forever; rejected ones are purged. |
 | — Retrieve | `slipbox:search` | Answer questions with claim-by-claim citations. |
 
 ### Higher-level workflows
@@ -96,8 +96,9 @@ slipbox-repo/
 ```
 
 The self-describing `id` scheme tells a note's kind by its shape: a **store**
-atom's `id` is a scalar Folgezettel position, a **stage** atom's `id` is the
-*list* of placement candidates, a **source** note's `id` is a UUID.
+atom's `id` is a scalar Folgezettel position, a **stage** atom's `id` is its
+proposed position in one-element *list* form (which also names the file, applied
+verbatim at persist), a **source** note's `id` is a UUID.
 
 ## Retrieval — one shared four-layer mechanism
 
@@ -110,6 +111,11 @@ decorrelated failure modes — a query must defeat all four to miss:
 3. **Semantic** — global k-NN over bge-m3 embeddings in sqlite-vec.
 4. **Judged / lexical** — a reader ranks the union; grep over wikilinks answers
    backlinks. Vectors nominate; a reader decides.
+
+Each lookup reports which models actually ran — `semantic_scorer` (the embedder)
+and `positional_scorer` (the reranker, or the token-overlap fallback) — so you can
+confirm the reranker engaged. The positional layer only fires when `index.md` has
+a topic matching the query, so keep the topic map populated (`slipbox:consolidate`).
 
 ## The three models (whitepaper §"Semantic layer")
 
