@@ -633,7 +633,12 @@ def create_atom(title: str, body: str, source=None, captured_by: str | None = No
         notes.ensure_layout(root)
         proposed = _propose_id(root, target, new_thread)
         moved = _adopt_attachments(root, attachments, root / config.STAGE_ATTACHMENTS)
-        path = notes.unique_path(root / config.STAGE, notes.slugify(title))
+        # Name the stage file by its proposed Folgezettel ID, not a title slug: a
+        # staged atom then carries the exact slot it will occupy — in BOTH its
+        # filename and its `id` frontmatter — so persist merely renames it into
+        # store/. IDs are unique within a batch (see _propose_id), so the
+        # unique_path collision fallback never fires in practice.
+        path = notes.unique_path(root / config.STAGE, proposed)
         frontmatter = {
             "id": [proposed],                 # the proposed store ID (list = stage)
             "title": title,
