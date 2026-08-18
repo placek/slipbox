@@ -7,6 +7,7 @@ scheduled job), and the parts of the persist job that need no reasoning.
 """
 from __future__ import annotations
 
+import argparse
 import json
 
 from . import config, embeddings, lookup, models, operations
@@ -130,20 +131,25 @@ def morning_digest(root=None) -> str:
 
 # --- Slash commands ----------------------------------------------------------
 
+def _cmd_root(root):
+    """A slash command / CLI subcommand acts on the given repo, else the default."""
+    return root if root is not None else config.repo_root(None)
+
+
 def cmd_help(raw: str = "") -> str:
     return HELP
 
 
-def cmd_status(raw: str = "") -> str:
-    return _render_status(operations.status())
+def cmd_status(raw: str = "", root=None) -> str:
+    return _render_status(operations.status(_cmd_root(root)))
 
 
-def cmd_digest(raw: str = "") -> str:
-    return morning_digest()
+def cmd_digest(raw: str = "", root=None) -> str:
+    return morning_digest(_cmd_root(root))
 
 
-def cmd_inbox(raw: str = "") -> str:
-    data = operations.inbox()
+def cmd_inbox(raw: str = "", root=None) -> str:
+    data = operations.inbox(_cmd_root(root))
     if not data["count"]:
         return "inbox is empty."
     lines = [f"{data['count']} inbox entries:"]
@@ -156,11 +162,11 @@ def cmd_inbox(raw: str = "") -> str:
     return "\n".join(lines)
 
 
-def cmd_stage(raw: str = "") -> str:
+def cmd_stage(raw: str = "", root=None) -> str:
     status = (raw or "").strip() or None
     if status and status not in config.REVIEW_STATUSES:
         return f"Unknown status: {status} (use {', '.join(config.REVIEW_STATUSES)})"
-    data = operations.stage(status)
+    data = operations.stage(status, _cmd_root(root))
     if not data["count"]:
         return "stage/ is empty."
     lines = [f"{data['count']} entries in stage/:"]
@@ -171,8 +177,8 @@ def cmd_stage(raw: str = "") -> str:
     return "\n".join(lines)
 
 
-def cmd_store(raw: str = "") -> str:
-    data = operations.store((raw or "").strip() or None)
+def cmd_store(raw: str = "", root=None) -> str:
+    data = operations.store((raw or "").strip() or None, _cmd_root(root))
     if not data["count"]:
         return "The store is empty."
     lines = [f"{data['count']} notes in Folgezettel order:"]
@@ -182,12 +188,12 @@ def cmd_store(raw: str = "") -> str:
     return "\n".join(lines)
 
 
-def cmd_show(raw: str = "") -> str:
+def cmd_show(raw: str = "", root=None) -> str:
     ident = (raw or "").strip()
     if not ident:
         return "Usage: /slipbox-show <id|path|title>"
     try:
-        data = operations.show(ident)
+        data = operations.show(ident, _cmd_root(root))
     except operations.OperationError as exc:
         return str(exc)
     head = "\n".join(
@@ -199,13 +205,14 @@ def cmd_show(raw: str = "") -> str:
     return f"{data['path']}\n---\n{head}\n---\n\n{data['content']}{tail}"
 
 
-def cmd_accept(raw: str = "") -> str:
+def cmd_accept(raw: str = "", root=None) -> str:
     parts = (raw or "").split()
     if not parts:
         return "Usage: /slipbox-accept <entry> [most-connected-id]"
     try:
         result = operations.review(
-            parts[0], config.REVIEW_ACCEPTED, parts[1] if len(parts) > 1 else None
+            parts[0], config.REVIEW_ACCEPTED, parts[1] if len(parts) > 1 else None,
+            root=_cmd_root(root),
         )
     except operations.OperationError as exc:
         return str(exc)
@@ -213,12 +220,12 @@ def cmd_accept(raw: str = "") -> str:
     return f"accepted: {result['title']}{target}"
 
 
-def cmd_reject(raw: str = "") -> str:
+def cmd_reject(raw: str = "", root=None) -> str:
     ident = (raw or "").strip()
     if not ident:
         return "Usage: /slipbox-reject <entry>"
     try:
-        result = operations.review(ident, config.REVIEW_REJECTED)
+        result = operations.review(ident, config.REVIEW_REJECTED, root=_cmd_root(root))
     except operations.OperationError as exc:
         return str(exc)
     return f"rejected: {result['title']} (purged by the next persist job)"
@@ -243,55 +250,94 @@ def _print_json(payload) -> None:
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
 
 
-def _cli_handler(args) -> None:
-    command = getattr(args, "slipbox_command", None) or "help"
-    if command == "help":
-        print(HELP)
-    elif command == "setup":
-        _print_json(operations.setup())
-    elif command == "status":
-        print(_render_status(operations.status()))
+# Commands that run over EVERY configured repo (or the one named by --repo):
+# first-run setup and the scheduled/maintenance jobs. Everything else is a query
+# against a single repo (--repo, else the default/first).
+_PER_REPO_COMMANDS = ("setup", "digest", "persist-accepted", "purge", "reindex", "schedule", "doctor")
+
+
+def _targets(args) -> list:
+    """Repos a per-repo command runs over: the named one, or all configured."""
+    name = getattr(args, "repo", None)
+    if name:
+        return [(name, config.repo_root(name))]
+    return config.repo_items()
+
+
+def _run_job(command: str, args, root) -> None:
+    if command == "setup":
+        _print_json(operations.setup(root))
     elif command == "digest":
-        print(morning_digest())
-    elif command == "inbox":
-        print(cmd_inbox())
-    elif command == "stage":
-        print(cmd_stage(args.status or ""))
-    elif command == "store":
-        print(cmd_store(args.prefix or ""))
-    elif command == "show":
-        print(cmd_show(args.ident))
-    elif command == "lookup":
-        _print_json(lookup.lookup(args.query, spaces=args.space or None, limit=args.limit))
-    elif command == "accept":
-        print(cmd_accept(" ".join(filter(None, [args.ident, args.after]))))
-    elif command == "reject":
-        print(cmd_reject(args.ident))
-    elif command == "persist":
-        _print_json(operations.persist(
-            args.ident, after=args.after, new_thread=args.new_thread, topic=args.topic
-        ))
+        print(morning_digest(root))
     elif command == "persist-accepted":
-        _print_json(operations.persist_accepted())
+        _print_json(operations.persist_accepted(root))
     elif command == "purge":
-        _print_json(operations.purge_rejected())
+        _print_json(operations.purge_rejected(root))
     elif command == "reindex":
         started = operations.stamp()
-        report = operations.reindex(full=args.full)
+        report = operations.reindex(full=args.full, root=root)
         operations.record_job("reindex", started,
-                              "failed" if report.get("error") else "ok", str(report))
+                              "failed" if report.get("error") else "ok", str(report), root)
         _print_json(report)
     elif command == "schedule":
-        _print_json(operations.schedule())
+        _print_json(operations.schedule(root))
     elif command == "doctor":
-        _print_json(doctor())
+        _print_json(doctor(root))
+
+
+def _cli_handler(args) -> None:
+    command = getattr(args, "slipbox_command", None) or "help"
+    if command in ("help", None):
+        print(HELP)
+        return
+
+    # Setup + scheduled jobs loop over every configured repo (separate lock,
+    # commit and job record per repo), or a single one when --repo is given.
+    if command in _PER_REPO_COMMANDS:
+        try:
+            targets = _targets(args)
+        except KeyError as exc:
+            print(exc.args[0] if exc.args else exc)
+            return
+        for name, root in targets:
+            if len(targets) > 1 or name:
+                print(f"# repo: {name or root}")
+            _run_job(command, args, root)
+        return
+
+    # Query commands act on --repo, else the default (first configured) repo.
+    try:
+        root = config.repo_root(getattr(args, "repo", None))
+    except KeyError as exc:
+        print(exc.args[0] if exc.args else exc)
+        return
+    if command == "status":
+        print(_render_status(operations.status(root)))
+    elif command == "inbox":
+        print(cmd_inbox(root=root))
+    elif command == "stage":
+        print(cmd_stage(args.status or "", root=root))
+    elif command == "store":
+        print(cmd_store(args.prefix or "", root=root))
+    elif command == "show":
+        print(cmd_show(args.ident, root=root))
+    elif command == "lookup":
+        _print_json(lookup.lookup(args.query, spaces=args.space or None, limit=args.limit, root=root))
+    elif command == "accept":
+        print(cmd_accept(" ".join(filter(None, [args.ident, args.after])), root=root))
+    elif command == "reject":
+        print(cmd_reject(args.ident, root=root))
+    elif command == "persist":
+        _print_json(operations.persist(
+            args.ident, after=args.after, new_thread=args.new_thread, topic=args.topic, root=root,
+        ))
     else:
         print(HELP)
 
 
-def doctor() -> dict:
-    """Is the environment able to do semantic work at all?"""
-    root = config.root()
+def doctor(root=None) -> dict:
+    """Is the environment able to do semantic work at all? (per repo)."""
+    root = root if root is not None else config.repo_root(None)
     report = {
         "root": str(root),
         "embed_model": config.embed_model(),
@@ -318,49 +364,62 @@ def doctor() -> dict:
 
 
 def setup_argparse(subparser) -> None:
+    # `--repo <name>` on every subcommand: for queries it selects one knowledge
+    # base (default: the first configured); for setup/jobs it limits the run to
+    # that repo instead of looping over all of them.
+    repo_parent = argparse.ArgumentParser(add_help=False)
+    repo_parent.add_argument(
+        "--repo", default=None,
+        help="Target one configured knowledge base (SLIPBOX_REPOS); "
+             "default: the first for queries, all for setup/jobs",
+    )
+
+    def add(name, **kw):
+        return subs.add_parser(name, parents=[repo_parent], **kw)
+
     subs = subparser.add_subparsers(dest="slipbox_command")
 
-    subs.add_parser("setup", help="Initialize the repository (first-run setup)")
-    subs.add_parser("status", help="Backlog counters")
-    subs.add_parser("digest", help="Morning digest (scheduled job 3)")
-    subs.add_parser("inbox", help="List inbox entries")
+    add("setup", help="Initialize the repository/repositories (first-run setup)")
+    add("status", help="Backlog counters")
+    add("digest", help="Morning digest (scheduled job 3)")
+    add("inbox", help="List inbox entries")
 
-    p_stage = subs.add_parser("stage", help="List atoms awaiting review")
+    p_stage = add("stage", help="List atoms awaiting review")
     p_stage.add_argument("status", nargs="?", default=None,
                          help=f"one of: {', '.join(config.REVIEW_STATUSES)}")
 
-    p_store = subs.add_parser("store", help="List the store")
+    p_store = add("store", help="List the store")
     p_store.add_argument("prefix", nargs="?", default=None)
 
-    p_show = subs.add_parser("show", help="Render a note")
+    p_show = add("show", help="Render a note")
     p_show.add_argument("ident")
 
-    p_lookup = subs.add_parser("lookup", help="Run the shared lookup mechanism")
+    p_lookup = add("lookup", help="Run the shared lookup mechanism")
     p_lookup.add_argument("query")
     p_lookup.add_argument("--space", action="append", choices=list(config.SPACES))
     p_lookup.add_argument("--limit", type=int, default=None)
 
-    p_accept = subs.add_parser("accept", help="Mark an atom accepted")
+    p_accept = add("accept", help="Mark an atom accepted")
     p_accept.add_argument("ident")
     p_accept.add_argument("after", nargs="?", default=None)
 
-    p_reject = subs.add_parser("reject", help="Mark an atom rejected")
+    p_reject = add("reject", help="Mark an atom rejected")
     p_reject.add_argument("ident")
 
-    p_persist = subs.add_parser("persist", help="Place an atom in the store")
+    p_persist = add("persist", help="Place an atom in the store")
     p_persist.add_argument("ident")
     p_persist.add_argument("--after", default=None)
     p_persist.add_argument("--new-thread", dest="new_thread", action="store_true")
     p_persist.add_argument("--topic", action="append", default=None)
 
-    subs.add_parser("persist-accepted", help="Persist accepted atoms with a decided placement")
-    subs.add_parser("purge", help="Delete rejected atoms")
-    subs.add_parser("schedule", help="Cron schedule and job state")
-    subs.add_parser("doctor", help="Check embeddings, index and configuration")
+    add("persist-accepted", help="Persist accepted atoms with a decided placement")
+    add("purge", help="Delete rejected atoms")
+    add("schedule", help="Cron schedule and job state")
+    add("doctor", help="Check embeddings, index and configuration")
 
-    p_reindex = subs.add_parser("reindex", help="Sync embeddings.db with the notes")
+    p_reindex = add("reindex", help="Sync embeddings.db with the notes")
     p_reindex.add_argument("--full", action="store_true", help="Rebuild from scratch")
 
-    subs.add_parser("help", help="How to use the slipbox plugin")
+    add("help", help="How to use the slipbox plugin")
 
     subparser.set_defaults(func=_cli_handler)

@@ -615,3 +615,18 @@ WRITING = (
     SLIPBOX_REVIEW, SLIPBOX_PERSIST, SLIPBOX_INDEX_ADD, SLIPBOX_INDEX_WRITE,
     SLIPBOX_PURGE_REJECTED, SLIPBOX_REINDEX,
 )
+
+# Every tool takes an optional `repo` selector: when several knowledge bases are
+# configured (SLIPBOX_REPOS), it chooses which one the call acts on; omitted, the
+# call acts on the first configured repo. `slipbox_setup` with no `repo` sets up
+# ALL configured repos. Injected here so the field stays in exactly one place.
+_REPO_PROPERTY = {
+    "type": "string",
+    "description": (
+        "Which configured knowledge base to act on when several are set up "
+        "(SLIPBOX_REPOS). Omit to use the default (first configured) repo."
+    ),
+}
+
+for _schema in (*READ_ONLY, *GATED, *WRITING):
+    _schema["parameters"].setdefault("properties", {}).setdefault("repo", _REPO_PROPERTY)

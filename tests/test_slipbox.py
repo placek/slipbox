@@ -261,3 +261,58 @@ def test_nested_frontmatter_roundtrips_as_json():
     assert parsed["id"] == ["21-a", "new-thread"]
     assert parsed["review"] == {"status": "pending"}
     assert body.strip() == "body"
+
+
+# --- Multiple repositories (named knowledge bases) ---------------------------
+
+def _init_git(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "tester"], check=True)
+
+
+def test_repo_registry_default_and_resolution(tmp_path, monkeypatch):
+    a, b = tmp_path / "a", tmp_path / "b"
+    monkeypatch.setenv("SLIPBOX_REPOS", f"work={a},personal={b}")
+    assert list(config.repos()) == ["work", "personal"]     # order preserved
+    assert config.default_repo() == "work"                  # first = default
+    assert config.repo_root(None) == a.resolve()            # no name → default
+    assert config.repo_root("personal") == b.resolve()
+    with pytest.raises(KeyError):
+        config.repo_root("nope")
+
+
+def test_tools_route_and_isolate_by_repo(tmp_path, monkeypatch):
+    import json
+
+    from slipbox import tools
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    _init_git(a)
+    _init_git(b)
+    monkeypatch.setenv("SLIPBOX_REPOS", f"work={a},personal={b}")
+    monkeypatch.delenv("SLIPBOX_REPO", raising=False)
+
+    # setup with no repo initializes EVERY configured repo
+    setup = json.loads(tools.slipbox_setup({}))
+    assert {r["repo"] for r in setup["setup"]} == {"work", "personal"}
+    assert (a / "index.md").is_file() and (b / "index.md").is_file()
+
+    # capture routes to the named repo, and each result echoes its repo
+    tools.slipbox_capture({"repo": "work", "title": "W", "content": "in work"})
+    tools.slipbox_capture({"repo": "personal", "title": "P", "content": "in personal"})
+
+    inbox_w = json.loads(tools.slipbox_inbox({"repo": "work"}))
+    inbox_p = json.loads(tools.slipbox_inbox({"repo": "personal"}))
+    assert inbox_w["repo"] == "work" and inbox_p["repo"] == "personal"
+    assert [e["title"] for e in inbox_w["entries"]] == ["W"]       # isolation:
+    assert [e["title"] for e in inbox_p["entries"]] == ["P"]       # no cross-leak
+
+    # omitting repo falls back to the default (first = work)
+    default_inbox = json.loads(tools.slipbox_inbox({}))
+    assert default_inbox["repo"] == "work"
+    assert [e["title"] for e in default_inbox["entries"]] == ["W"]
+
+    # an unknown repo is a clean error, never a crash
+    assert "error" in json.loads(tools.slipbox_inbox({"repo": "ghost"}))

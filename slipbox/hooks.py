@@ -22,32 +22,36 @@ logger = logging.getLogger(__name__)
 
 
 def on_session_start(**_) -> None:
-    root = config.root()
-    try:
-        if not operations.is_initialized(root):
-            result = operations.setup(root)
-            logger.info("slipbox: initialized repository at %s (created: %s)",
-                        result["root"], ", ".join(result["created"]) or "nothing")
-    except Exception as exc:  # noqa: BLE001 - a hook must never raise
-        logger.warning("slipbox: repository setup failed: %s", exc)
+    # Set up and freshness-check EVERY configured repo (config.repo_items() yields
+    # the single default repo when SLIPBOX_REPOS is unset).
+    for name, root in config.repo_items():
+        label = name or "repo"
+        try:
+            if not operations.is_initialized(root):
+                result = operations.setup(root)
+                logger.info("slipbox: initialized %s at %s (created: %s)",
+                            label, result["root"], ", ".join(result["created"]) or "nothing")
+        except Exception as exc:  # noqa: BLE001 - a hook must never raise
+            logger.warning("slipbox: setup failed for %s: %s", label, exc)
 
-    try:
-        report = lookup.freshness(root)
-    except Exception as exc:  # noqa: BLE001 - a hook must never raise
-        logger.warning("slipbox: freshness check failed: %s", exc)
-        return
-    if report.get("stale"):
-        logger.info(
-            "slipbox: embeddings.db is stale (missing %s, changed %s, orphaned %s) "
-            "— run `slipbox reindex`",
-            report["missing"], report["changed"], report["orphaned"],
-        )
+        try:
+            report = lookup.freshness(root)
+        except Exception as exc:  # noqa: BLE001 - a hook must never raise
+            logger.warning("slipbox: freshness check failed for %s: %s", label, exc)
+            continue
+        if report.get("stale"):
+            logger.info(
+                "slipbox: %s embeddings.db is stale (missing %s, changed %s, orphaned %s) "
+                "— run `slipbox reindex`",
+                label, report["missing"], report["changed"], report["orphaned"],
+            )
 
 
 def on_session_end(**_) -> None:
-    try:
-        result = gitops.commit("slipbox: commit pending changes")
-        if result.get("committed"):
-            logger.info("slipbox: %s", result["message"])
-    except Exception as exc:  # noqa: BLE001 - a hook must never raise
-        logger.warning("slipbox: session-end commit failed: %s", exc)
+    for name, root in config.repo_items():
+        try:
+            result = gitops.commit("slipbox: commit pending changes", root)
+            if result.get("committed"):
+                logger.info("slipbox: %s: %s", name or "repo", result["message"])
+        except Exception as exc:  # noqa: BLE001 - a hook must never raise
+            logger.warning("slipbox: session-end commit failed for %s: %s", name or "repo", exc)

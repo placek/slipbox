@@ -131,6 +131,18 @@ Three scheduled jobs take `flock`-based locks shared with the manual skills:
 (`slipbox persist-accepted`), and the morning `digest` (`slipbox digest`).
 `slipbox_schedule` reports their state.
 
+## Multiple knowledge bases (one instance, several repos)
+
+Set `SLIPBOX_REPOS="work=/kb/work,personal=/kb/personal"` and one plugin instance
+serves several stores at once. Every tool takes an optional `repo` argument
+selecting which base it acts on; **the first configured entry is the default**
+when a call names none, and each result echoes its `repo`. The stores are fully
+isolated — separate `embeddings.db`, locks, `index.md` and `SOUL.md` charter — so
+they can be adapted and persisted concurrently. First-run setup, the scheduled
+jobs and the session hooks loop over every configured repo (`slipbox <job> --repo
+<name>` targets one). With `SLIPBOX_REPOS` unset the plugin stays single-repo
+(`$SLIPBOX_REPO`), unchanged.
+
 ## Layout of this package
 
 ```
@@ -182,6 +194,7 @@ pip install -r slipbox/requirements.txt
 `setup-hermes-profile.sh` does all of this against a throwaway profile.
 
 Key environment variables (all optional, sane defaults): `SLIPBOX_REPO`,
+`SLIPBOX_REPOS` (multi-repo; the first entry is the default),
 `SLIPBOX_DEVICE`, `SLIPBOX_SEMANTIC`, `SLIPBOX_EMBED_MODEL`, `SLIPBOX_RERANK_MODEL`,
 `SLIPBOX_JUDGE_MODEL`, `SLIPBOX_WINDOW`, `SLIPBOX_PROBE_BUDGET`,
 `SLIPBOX_DUPLICATE_DISTANCE`, `SLIPBOX_PENDING_WARN`, `SLIPBOX_CRON_*`. See

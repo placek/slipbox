@@ -10,3 +10,6 @@ __pycache__/
 .venv/
 .venv-hermes312/
 *.egg-info/
+
+# Local Claude Code settings
+.claude/settings.local.json

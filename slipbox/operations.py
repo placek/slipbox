@@ -23,7 +23,9 @@ class OperationError(RuntimeError):
 
 
 def _root(root: Path | None = None) -> Path:
-    return root or config.root()
+    # None falls back to the default (first configured) repo — which is exactly
+    # config.root() in single-repo mode, so nothing changes there.
+    return root if root is not None else config.repo_root(None)
 
 
 def stamp() -> str:

@@ -61,6 +61,13 @@ class _MonkeyPatch:
         self._saved.append((name, os.environ.get(name)))
         os.environ[name] = value
 
+    def delenv(self, name: str, raising: bool = True) -> None:
+        if name in os.environ:
+            self._saved.append((name, os.environ.get(name)))
+            os.environ.pop(name, None)
+        elif raising:
+            raise KeyError(name)
+
     def undo(self) -> None:
         for name, old in reversed(self._saved):
             if old is None:

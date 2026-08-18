@@ -115,6 +115,65 @@ def db_path() -> Path:
     return root() / DB_FILE
 
 
+# --- Multiple repositories (named knowledge bases) ---------------------------
+#
+# `SLIPBOX_REPOS="work=/kb/work,personal=/kb/personal"` exposes several stores
+# through one plugin instance. A tool's `repo` argument selects one; the FIRST
+# configured entry is the default when a call names none. Each repo is fully
+# self-isolated (its own `embeddings.db`, `.slipbox-locks/`, `index.md`, `SOUL.md`).
+# With the variable unset the plugin stays single-repo (`root()`), unchanged.
+
+def repos() -> dict[str, Path]:
+    """Ordered map of configured repositories (insertion order; first = default).
+
+    Empty in single-repo mode. Duplicate names keep their first definition.
+    """
+    registry: dict[str, Path] = {}
+    for pair in _env("SLIPBOX_REPOS").split(","):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        name, path = pair.split("=", 1)
+        name = name.strip()
+        if name and name not in registry:
+            registry[name] = Path(path.strip()).expanduser().resolve()
+    return registry
+
+
+def default_repo() -> str | None:
+    """The default repo name — the first configured, or None in single-repo mode."""
+    return next(iter(repos()), None)
+
+
+def active_repo_name(name: str | None = None) -> str | None:
+    """The effective repo name a call targets: the given one, else the default."""
+    return None if not repos() else ((name or "").strip() or default_repo())
+
+
+def repo_root(name: str | None = None) -> Path:
+    """Resolve a repo name to its root. None/empty selects the default (first) repo.
+
+    In single-repo mode (no `SLIPBOX_REPOS`) always returns `root()`. Raises
+    KeyError on an unknown name.
+    """
+    registry = repos()
+    if not registry:
+        return root()
+    key = (name or "").strip() or default_repo()
+    if key not in registry:
+        raise KeyError(f"unknown repo '{key}' — configured: {', '.join(registry) or 'none'}")
+    return registry[key]
+
+
+def repo_items() -> list[tuple[str | None, Path]]:
+    """`(name, root)` for every configured repo — for jobs/setup/hooks that loop.
+
+    Single-repo mode yields one `(None, root())`.
+    """
+    registry = repos()
+    return list(registry.items()) if registry else [(None, root())]
+
+
 # --- Semantic layer (whitepaper §"Semantic layer") ---------------------------
 #
 # Exactly three model classes, all loaded **in-process** (FlagEmbedding /
