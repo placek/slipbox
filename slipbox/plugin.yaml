@@ -1,5 +1,5 @@
 name: slipbox
-version: 0.1.0
+version: 0.2.0
 description: >-
   A curated, agent-operated knowledge base for hermes-agent. The CARP write path
   (capture → adapt → review → persist) distils unstructured sources into atomic,
