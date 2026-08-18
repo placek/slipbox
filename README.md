@@ -1,6 +1,6 @@
 # slipbox — a curated, agent-operated knowledge base (hermes-agent plugin)
 
-A Python hermes-agent plugin implementing the [Slipbox whitepaper](./slipbox-whitepaper.typ):
+A Python hermes-agent plugin implementing the [Slipbox whitepaper](./slipbox-whitepaper.pdf) ([Typst source](./slipbox-whitepaper.typ)):
 it inverts the usual retrieval paradigm by spending intelligence at **write time**
 — distilling every captured source into atomic, human-reviewed notes placed in a
 linearly ordered (Folgezettel) store of plain-text markdown under git — so that
