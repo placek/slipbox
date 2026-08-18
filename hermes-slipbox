@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Launch hermes with the slipbox semantic layer (bge-m3 + reranker) reachable.
+#
+# The plugin loads IN-PROCESS inside hermes' own Python 3.12 interpreter
+# (hermes-agent-env), which has no torch / FlagEmbedding. This wrapper puts a
+# matching cp312 venv on PYTHONPATH and the nix-ld C++ runtime (libstdc++) on
+# LD_LIBRARY_PATH so the in-process models load. On NixOS the two env vars must
+# be present at process start — that is why a wrapper is needed rather than the
+# profile .env (which hermes reads too late for the dynamic linker).
+#
+# Without this wrapper the store still captures / adapts / reviews / persists /
+# greps; only lookup degrades to the python-fallback (token overlap + brute-force
+# cosine). Rebuild the venv after a hermes upgrade (its python path changes):
+#   hermes-agent-env/bin/python3 -m venv .venv-hermes312
+#   .venv-hermes312/bin/python -m pip install -r slipbox/requirements.txt
+#
+# Usage:  ./hermes-slipbox -p slipbox chat
+#         ./hermes-slipbox -p slipbox slipbox reindex
+set -euo pipefail
+
+# The cp312 venv holding torch / FlagEmbedding (override with $SLIPBOX_SEMANTIC_VENV).
+SEMANTIC_VENV="${SLIPBOX_SEMANTIC_VENV:-/srv/data/projects/placek/slipbox/.venv-hermes312}"
+SITE="$SEMANTIC_VENV/lib/python3.12/site-packages"
+
+# Stable system path to the nix-ld libraries (libstdc++.so.6 lives here).
+NIXLD="/run/current-system/sw/share/nix-ld/lib"
+
+if [[ ! -d "$SITE" ]]; then
+    echo "hermes-slipbox: semantic venv not found at $SEMANTIC_VENV" >&2
+    echo "  create it with hermes' own python, then pip install slipbox/requirements.txt" >&2
+    exit 1
+fi
+
+export PYTHONPATH="${SITE}${PYTHONPATH:+:$PYTHONPATH}"
+export LD_LIBRARY_PATH="${NIXLD}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+exec hermes "$@"
