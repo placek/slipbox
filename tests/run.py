@@ -53,9 +53,20 @@ def _install_pytest_shim() -> None:
 _install_pytest_shim()
 
 
+_MISSING = object()
+
+
 class _MonkeyPatch:
+    """The slice of pytest's monkeypatch the suite uses: env vars and attributes.
+
+    Attribute patching is what lets the atomiser tests stub the model — the whole
+    dedicated-agent contract is testable on a bare interpreter precisely because
+    no test ever needs real weights.
+    """
+
     def __init__(self):
         self._saved: list[tuple[str, str | None]] = []
+        self._attrs: list[tuple[object, str, object]] = []
 
     def setenv(self, name: str, value: str) -> None:
         self._saved.append((name, os.environ.get(name)))
@@ -68,7 +79,27 @@ class _MonkeyPatch:
         elif raising:
             raise KeyError(name)
 
+    def setattr(self, target: object, name: str, value: object) -> None:
+        self._attrs.append((target, name, getattr(target, name, _MISSING)))
+        setattr(target, name, value)
+
+    def delattr(self, target: object, name: str, raising: bool = True) -> None:
+        if hasattr(target, name):
+            self._attrs.append((target, name, getattr(target, name)))
+            delattr(target, name)
+        elif raising:
+            raise AttributeError(name)
+
     def undo(self) -> None:
+        for target, name, old in reversed(self._attrs):
+            if old is _MISSING:
+                try:
+                    delattr(target, name)
+                except AttributeError:
+                    pass
+            else:
+                setattr(target, name, old)
+        self._attrs.clear()
         for name, old in reversed(self._saved):
             if old is None:
                 os.environ.pop(name, None)

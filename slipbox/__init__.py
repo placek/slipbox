@@ -17,11 +17,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import commands, config, hooks, schemas, tools
+from . import atomizer, commands, config, hooks, schemas, tools
 
 logger = logging.getLogger(__name__)
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 TOOLSET = "slipbox"
 
@@ -54,6 +54,12 @@ def register(ctx) -> None:
     CARP mechanics and the semantic models all live in this package, loaded into
     hermes directly (no external server, no separate transport).
     """
+    # The dedicated atomiser's `host` backend calls the model through hermes'
+    # own plugin LLM lane. Bind it once here — it is the only moment the plugin
+    # is handed the context, and both the tools and the CLI (cron) reach the
+    # agent through the same module afterwards.
+    atomizer.bind_host(ctx)
+
     registered = 0
     for schema in _active_schemas():
         handler = tools.HANDLERS.get(schema["name"])

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from . import config, embeddings, lookup, operations
+from . import atomizer, config, embeddings, lookup, operations
 
 
 def _ok(payload) -> str:
@@ -294,7 +294,73 @@ def slipbox_reindex(args: dict, **_) -> str:
                 lambda root: operations.reindex(full=bool(args.get("full", False)), root=root))
 
 
+def slipbox_adapt(args: dict, **_) -> str:
+    """Hand distillation to the dedicated agent and return immediately.
+
+    The handler deliberately does no reasoning and no waiting: it resolves the
+    work list, submits it to the background atomiser, and answers with a job id.
+    Blocking here would put the conversation back on the critical path of the
+    very operation this feature moved off it.
+    """
+    def call(root):
+        if not config.atomizer_enabled():
+            raise operations.OperationError(
+                "the dedicated atomiser is disabled (atomizer.enabled) — distil by "
+                "hand with slipbox_source/slipbox_atom, or re-enable it"
+            )
+        idents = _as_list(args.get("idents"))
+        if not idents:
+            idents = atomizer.pending_entries(root)
+        if not idents:
+            return {"job": None, "status": "empty",
+                    "message": "inbox is empty — nothing to distil"}
+        repo = config.active_repo_name(args.get("repo"))
+        submitted = atomizer.submit(idents, root, repo)
+        return {
+            **submitted,
+            "note": (
+                "Distillation runs in the background — do not distil this entry "
+                "yourself. Poll slipbox_adapt_status for the atoms."
+            ),
+        }
+    return _run(args, "slipbox_adapt", call)
+
+
+def slipbox_readapt(args: dict, **_) -> str:
+    """Re-read a source's archived original for further atoms, in the background."""
+    def call(root):
+        if not config.atomizer_enabled():
+            raise operations.OperationError(
+                "the dedicated atomiser is disabled (atomizer.enabled)"
+            )
+        source = (args.get("source") or "").strip()
+        if not source:
+            raise operations.OperationError("which source should be reread?")
+        repo = config.active_repo_name(args.get("repo"))
+        return atomizer.submit_readapt(source, root, args.get("guidance") or "", repo)
+    return _run(args, "slipbox_readapt", call)
+
+
+def slipbox_adapt_status(args: dict, **_) -> str:
+    def call(root):
+        job_id = (args.get("job") or "").strip()
+        if job_id:
+            found = atomizer.job(job_id)
+            if found is None:
+                raise operations.OperationError(f"no such job: {job_id}")
+            return {"job": found, "agent": atomizer.backend_status()}
+        return {
+            "jobs": atomizer.jobs(_int_or(args.get("limit"), 20)),
+            "running": atomizer.running(),
+            "agent": atomizer.backend_status(),
+        }
+    return _run(args, "slipbox_adapt_status", call)
+
+
 HANDLERS = {
+    "slipbox_adapt": slipbox_adapt,
+    "slipbox_readapt": slipbox_readapt,
+    "slipbox_adapt_status": slipbox_adapt_status,
     "slipbox_show": slipbox_show,
     "slipbox_lookup": slipbox_lookup,
     "slipbox_inbox": slipbox_inbox,

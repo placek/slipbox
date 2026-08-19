@@ -601,15 +601,88 @@ SLIPBOX_REINDEX = {
     },
 }
 
+SLIPBOX_ADAPT = {
+    "name": "slipbox_adapt",
+    "description": (
+        "CARP Stage 2. Hand an inbox entry to the DEDICATED ATOMISER AGENT, which "
+        "distils it in the BACKGROUND — its own model, its own instructions, off "
+        "this conversation. Returns a job id immediately; the source note and the "
+        "staged atoms appear as the agent finishes, each committed. You do NOT do "
+        "the distillation yourself and you do NOT wait for it: report the job and "
+        "carry on. Poll slipbox_adapt_status for progress. Omit `idents` to sweep "
+        "the whole inbox (oldest first)."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "idents": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Paths or titles of inbox entries to distil. Omit to take every "
+                    "usable inbox entry."
+                ),
+            },
+        },
+    },
+}
+
+SLIPBOX_READAPT = {
+    "name": "slipbox_readapt",
+    "description": (
+        "Re-distil a source's ARCHIVED ORIGINAL for further atoms, using the same "
+        "dedicated atomiser agent, in the BACKGROUND. The whitepaper's "
+        "re-adaptation: a rereading that ADDS what the first pass missed — the "
+        "agent is shown the atoms that already exist and told not to repeat them. "
+        "The source note is reused, never recreated. Returns a job id immediately; "
+        "poll slipbox_adapt_status. You do not re-distil yourself."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "source": {
+                "type": "string",
+                "description": "The source note (wikilink, slug or path) to reread.",
+            },
+            "guidance": {
+                "type": "string",
+                "description": (
+                    "Optional steer from the reviewer — 'split finer', 'focus on "
+                    "the method', 'we missed the objections'."
+                ),
+            },
+        },
+        "required": ["source"],
+    },
+}
+
+SLIPBOX_ADAPT_STATUS = {
+    "name": "slipbox_adapt_status",
+    "description": (
+        "Progress of background distillation jobs run by the dedicated atomiser "
+        "agent: which entries are queued, running, done or failed, the atoms each "
+        "produced, and which model is doing the work. Pass `job` for one job, omit "
+        "for the recent ones."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "job": {"type": "string", "description": "A job id from slipbox_adapt."},
+            "limit": {"type": "integer", "description": "How many recent jobs (default 20)."},
+        },
+    },
+}
+
 READ_ONLY = (
     SLIPBOX_SHOW, SLIPBOX_LOOKUP, SLIPBOX_INBOX, SLIPBOX_STAGE, SLIPBOX_SOURCES,
     SLIPBOX_STORE, SLIPBOX_TREE, SLIPBOX_BACKLINKS, SLIPBOX_INDEX, SLIPBOX_ORIGINAL,
-    SLIPBOX_STATUS, SLIPBOX_LOG, SLIPBOX_SCHEDULE,
+    SLIPBOX_STATUS, SLIPBOX_LOG, SLIPBOX_SCHEDULE, SLIPBOX_ADAPT_STATUS,
 )
 
 GATED = (SLIPBOX_SEARCH, SLIPBOX_QUOTE)
 
 WRITING = (
+    SLIPBOX_ADAPT, SLIPBOX_READAPT,
     SLIPBOX_SETUP, SLIPBOX_CAPTURE, SLIPBOX_SOURCE, SLIPBOX_ATOM, SLIPBOX_SCOPE,
     SLIPBOX_MOVE_ATTACHMENTS, SLIPBOX_ARCHIVE_ORIGINAL, SLIPBOX_DROP_INBOX,
     SLIPBOX_REVIEW, SLIPBOX_PERSIST, SLIPBOX_INDEX_ADD, SLIPBOX_INDEX_WRITE,

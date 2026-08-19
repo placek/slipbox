@@ -26,7 +26,13 @@ INBOX = "inbox"
 STAGE = "stage"
 DB = "embeddings-db"
 REPO = "repo"
-ALL = (INBOX, STAGE, DB, REPO)
+# Held for a whole distillation by the dedicated atomiser. Deliberately a name no
+# ordinary operation takes: the steps *inside* a distillation still acquire
+# `inbox`/`stage`/`repo`/`db` themselves, and flock conflicts between two open
+# descriptions even within one process — so reusing those names here would
+# deadlock the pipeline against itself. This one only serialises distillations.
+ATOMIZER = "atomizer"
+ALL = (INBOX, STAGE, DB, REPO, ATOMIZER)
 
 
 class LockBusy(RuntimeError):

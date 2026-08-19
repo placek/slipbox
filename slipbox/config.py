@@ -78,6 +78,85 @@ def _env(*names: str, default: str = "") -> str:
     return default
 
 
+# --- Host plugin configuration ------------------------------------------------
+#
+# hermes keeps per-plugin settings under `plugins.entries.slipbox` in its
+# `config.yaml`. That is the operator's natural home for what the *deployment*
+# decides (which model distils, what it is told to do), as opposed to what the
+# *repository* decides (layout, thresholds), which stays in the environment.
+#
+# Reading it must never be load-bearing: the plugin is importable on a bare
+# interpreter with no hermes on the path (the test harness and the CLI rely on
+# it), so a missing host, an unreadable config, or a malformed entry all degrade
+# to "no plugin config" rather than raising. Resolution order for every setting
+# below is therefore: plugin config → environment → shipped default.
+
+_PLUGIN_CONFIG: dict | None = None
+PLUGIN_ID = "slipbox"
+
+
+def plugin_config() -> dict:
+    """`plugins.entries.slipbox` from the host's config.yaml — `{}` when absent.
+
+    Cached for the process: hermes reads its config once at startup and a plugin
+    that re-read it per tool call would be paying for nothing.
+    """
+    global _PLUGIN_CONFIG
+    if _PLUGIN_CONFIG is None:
+        _PLUGIN_CONFIG = _load_plugin_config()
+    return _PLUGIN_CONFIG
+
+
+def _load_plugin_config() -> dict:
+    try:  # hermes is absent on a bare interpreter — that is a supported mode
+        from hermes_cli.config import load_config  # type: ignore[import-not-found]
+
+        cfg = load_config() or {}
+        entries = (cfg.get("plugins") or {}).get("entries") or {}
+        entry = entries.get(PLUGIN_ID) or {}
+        return entry if isinstance(entry, dict) else {}
+    except Exception:  # noqa: BLE001 - any failure means "no plugin config"
+        return {}
+
+
+def _setting(path: str, *env_names: str, default: str = "") -> str:
+    """One setting resolved plugin config → environment → default.
+
+    `path` is dotted (`atomizer.model`) and looked up inside the plugin's own
+    config entry; `env_names` are the environment fallbacks.
+    """
+    node: object = plugin_config()
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            node = None
+            break
+        node = node[part]
+    if node not in (None, ""):
+        return str(node)
+    return _env(*env_names, default=default) if env_names else default
+
+
+def _setting_int(path: str, env_name: str, default: int) -> int:
+    try:
+        return int(_setting(path, env_name, default=str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _setting_float(path: str, env_name: str, default: float) -> float:
+    try:
+        return float(_setting(path, env_name, default=str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _setting_bool(path: str, env_name: str, default: bool) -> bool:
+    raw = _setting(path, env_name, default="").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "no", "off"}
+
+
 def _float(name: str, default: float) -> float:
     try:
         return float(os.environ[name])
@@ -224,6 +303,119 @@ def readonly() -> bool:
     not modify, while another (or the scheduled jobs) does the writing.
     """
     return _bool("SLIPBOX_READONLY", False)
+
+
+# --- The atomiser: the dedicated distillation agent ---------------------------
+#
+# Atomisation is the whitepaper's irreplaceable operation, and it is *not* the
+# host agent's job: a conversational model distilling inline blocks the
+# conversation, inherits whatever context happens to be in the window, and makes
+# a nightly unattended run impossible. So distillation runs as a dedicated agent
+# — its own model, its own instructions, its own context, off the conversation —
+# behind `atomizer.py`. Every trigger routes through it: the tool, the slash
+# command, the CLI, and the auto-adapt cron job alike.
+#
+# The deployment decides two things, both from plugin config (`atomizer.model`,
+# `atomizer.instructions`), which is why the reader above exists.
+
+ATOMIZER_LOCAL = "local"      # the in-process judge (models.judge_generate)
+ATOMIZER_HOST = "host"        # the host's LLM lane (ctx.llm), hermes-routed
+ATOMIZER_BACKENDS = (ATOMIZER_LOCAL, ATOMIZER_HOST)
+
+
+def atomizer_enabled() -> bool:
+    """Whether distillation is delegated to the dedicated agent (default: yes).
+
+    Turning it off restores the old behaviour — the host agent does the reasoning
+    by following the `adapt` skill by hand — which is the escape hatch when the
+    configured model is unreachable and a human wants the work done anyway.
+    """
+    return _setting_bool("atomizer.enabled", "SLIPBOX_ATOMIZER", default=True)
+
+
+def atomizer_backend() -> str:
+    """Where the dedicated agent runs: `local` (in-process judge) or `host`.
+
+    `local` keeps the whole operation on this machine — no content leaves the
+    box, which is the default a private knowledge base deserves. `host` hands the
+    call to hermes' own LLM lane (`ctx.llm`), which owns provider routing and
+    auth; steering its model needs the operator's trust flags
+    (`plugins.entries.slipbox.llm.allow_model_override`).
+    """
+    value = _setting("atomizer.backend", "SLIPBOX_ATOMIZER_BACKEND",
+                     default=ATOMIZER_LOCAL).strip().lower()
+    return value if value in ATOMIZER_BACKENDS else ATOMIZER_LOCAL
+
+
+def atomizer_model() -> str:
+    """The model that distils. Defaults to the judge — atomisation *is* judging."""
+    return _setting("atomizer.model", "SLIPBOX_ATOMIZER_MODEL", default=judge_model())
+
+
+def atomizer_provider() -> str:
+    """Provider for the `host` backend; empty means the host's own routing."""
+    return _setting("atomizer.provider", "SLIPBOX_ATOMIZER_PROVIDER")
+
+
+def atomizer_instructions() -> str:
+    """What the dedicated agent is told to do — the composition contract.
+
+    Resolution: plugin config (`atomizer.instructions`, inline text *or* a path)
+    → `$SLIPBOX_ATOMIZER_INSTRUCTIONS` (likewise) → the shipped
+    `templates/ATOMIZER.md`. Shipping a default matters: the contract is the
+    whitepaper's, and a deployment that overrides it is deliberately changing
+    what the store means, never merely tweaking a prompt.
+    """
+    raw = _setting("atomizer.instructions", "SLIPBOX_ATOMIZER_INSTRUCTIONS").strip()
+    if raw:
+        # A single line that resolves to a readable file is a path; anything else
+        # (notably multi-line YAML) is the instructions themselves.
+        if "\n" not in raw:
+            candidate = Path(raw).expanduser()
+            if candidate.is_file():
+                return candidate.read_text(encoding="utf-8")
+        return raw
+    shipped = Path(__file__).resolve().parent / "templates" / "ATOMIZER.md"
+    return shipped.read_text(encoding="utf-8") if shipped.is_file() else ""
+
+
+def atomizer_max_atoms() -> int:
+    """Upper bound on atoms from one entry — the relevance test, made mechanical.
+
+    The contract says *better three sharp notes than ten restatements*; a ceiling
+    stops a verbose model turning one article into a wall of near-duplicates.
+    """
+    return _setting_int("atomizer.max_atoms", "SLIPBOX_ATOMIZER_MAX_ATOMS", default=12)
+
+
+def atomizer_max_chars() -> int:
+    """How much of an entry is handed to the model in one pass."""
+    return _setting_int("atomizer.max_chars", "SLIPBOX_ATOMIZER_MAX_CHARS", default=24000)
+
+
+def atomizer_max_tokens() -> int:
+    """Generation ceiling — the plan is JSON, and a truncated plan is unusable."""
+    return _setting_int("atomizer.max_tokens", "SLIPBOX_ATOMIZER_MAX_TOKENS", default=4096)
+
+
+def atomizer_temperature() -> float:
+    """Near-greedy: distillation wants faithfulness, not invention."""
+    return _setting_float("atomizer.temperature", "SLIPBOX_ATOMIZER_TEMPERATURE", default=0.1)
+
+
+def atomizer_timeout() -> float:
+    """Seconds one distillation may take before it is abandoned as failed."""
+    return _setting_float("atomizer.timeout", "SLIPBOX_ATOMIZER_TIMEOUT", default=900.0)
+
+
+def atomizer_candidates() -> int:
+    """How many related store notes the agent is shown as placement candidates."""
+    return _setting_int("atomizer.candidates", "SLIPBOX_ATOMIZER_CANDIDATES", default=12)
+
+
+def atomizer_retries() -> int:
+    """Re-asks allowed when the model returns unusable JSON (schema repair)."""
+    return _setting_int("atomizer.retries", "SLIPBOX_ATOMIZER_RETRIES", default=2)
 
 
 def semantic_enabled() -> bool:

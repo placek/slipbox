@@ -333,3 +333,192 @@ def test_readonly_registers_only_the_read_surface(monkeypatch):
 
     monkeypatch.delenv("SLIPBOX_READONLY")
     assert "slipbox_capture" in {s["name"] for s in slipbox._active_schemas()}
+
+
+# --- The dedicated atomiser agent --------------------------------------------
+#
+# The agent's *model* is stubbed throughout: what these tests pin down is the
+# contract around it — that a plan is validated before it touches the store,
+# that the store is never trusted to the model, and that every trigger routes
+# through the one background path.
+
+def _plan_json(atoms):
+    import json
+    return json.dumps({
+        "source": {"title": "On Rivers", "author": "H", "type": "article",
+                   "reference": "", "date": "", "topic": "water",
+                   "tags": ["flow"], "summary": "A short literature note."},
+        "atoms": atoms,
+    })
+
+
+def _atom(title, **over):
+    base = {"title": title, "body": f"{title}. A full self-contained sentence.",
+            "variants": [f"{title} (alt)"], "scope": "in",
+            "scope_rationale": "squarely in", "link_after": None,
+            "continues": None, "new_thread": True, "new_thread_topic": "water",
+            "rationale": "opens a thread"}
+    base.update(over)
+    return base
+
+
+def test_atomizer_plan_is_validated_before_it_touches_the_store():
+    from slipbox import atomizer
+
+    # An atom missing a body is not an atom — dropped, not written.
+    plan = atomizer.parse_plan(_plan_json([
+        _atom("Kept"), {"title": "No body", "body": "  "}, "not-an-object",
+    ]))
+    assert [a["title"] for a in plan["atoms"]] == ["Kept"]
+
+    # A source block with no title is a failed distillation, never a guess.
+    import json
+    with pytest.raises(atomizer.AtomizerError):
+        atomizer.parse_plan(json.dumps({"source": {"summary": "x"}, "atoms": []}))
+
+    # Re-adaptation reuses the existing source, so it needs no source block.
+    reused = atomizer.parse_plan(json.dumps({"atoms": [_atom("Extra")]}),
+                                 require_source=False)
+    assert [a["title"] for a in reused["atoms"]] == ["Extra"]
+
+
+def test_atomizer_tolerates_fenced_and_prefixed_json():
+    from slipbox import atomizer
+
+    fenced = "Here is the plan:\n```json\n" + _plan_json([_atom("A")]) + "\n```\n"
+    assert atomizer.parse_plan(fenced)["source"]["title"] == "On Rivers"
+
+
+def test_atomizer_bounds_what_the_model_may_do(monkeypatch):
+    from slipbox import atomizer
+
+    monkeypatch.setenv("SLIPBOX_ATOMIZER_MAX_ATOMS", "2")
+    plan = atomizer.parse_plan(_plan_json([_atom(f"A{i}") for i in range(9)]))
+    assert len(plan["atoms"]) == 2                      # the ceiling is enforced
+
+    # `continues` may only point BACKWARDS inside the batch — a forward or
+    # self-reference would make chaining unresolvable, so it is dropped.
+    plan = atomizer.parse_plan(_plan_json([
+        _atom("first", continues=0), _atom("second", continues=0),
+    ]))
+    assert plan["atoms"][0]["continues"] is None
+    assert plan["atoms"][1]["continues"] == 0
+
+    # An unknown scope degrades to unclassified rather than corrupting metadata.
+    plan = atomizer.parse_plan(_plan_json([_atom("s", scope="sideways")]))
+    assert plan["atoms"][0]["scope"] is None
+
+
+def test_atomizer_distils_an_entry_end_to_end(repo, monkeypatch):
+    from slipbox import atomizer
+
+    ops.setup(repo)
+    ops.capture("Rivers", "Water flows downhill. It carries silt.", root=repo)
+    entry = ops.inbox(repo)["entries"][0]["path"]
+
+    # Stub the model: the agent's plan chains atom 1 onto atom 0.
+    monkeypatch.setattr(atomizer, "_generate", lambda i, p: _plan_json([
+        _atom("Water flows downhill"),
+        _atom("Flow carries silt", continues=0, new_thread=False),
+    ]))
+
+    result = atomizer.distil(entry, repo)
+
+    # The source note was written and both atoms cite it.
+    assert result["source"]["title"] == "On Rivers"
+    assert result["atom_count"] == 2
+    ids = [a["proposed_id"] for a in result["atoms"]]
+    assert ids == ["1", "1-a"]          # the second continues the first
+
+    # Atoms are staged, never placed: the store is still empty.
+    assert ops.stage(root=repo)["count"] == 2
+    assert ops.store(root=repo)["count"] == 0
+
+    # The original went to cold storage, so the inbox is clear.
+    assert ops.inbox(repo)["count"] == 0
+    assert result["archived"]
+
+
+def test_atomizer_survives_one_bad_atom(repo, monkeypatch):
+    from slipbox import atomizer
+
+    ops.setup(repo)
+    ops.capture("Rivers", "Water flows downhill.", root=repo)
+    entry = ops.inbox(repo)["entries"][0]["path"]
+
+    # The model hallucinates a link target that does not exist. That atom must
+    # cost only itself — the rest of the distillation still lands.
+    monkeypatch.setattr(atomizer, "_generate", lambda i, p: _plan_json([
+        _atom("Good one"),
+        _atom("Bad placement", link_after="not-an-id", new_thread=False),
+    ]))
+
+    result = atomizer.distil(entry, repo)
+    assert result["atom_count"] == 1
+    assert len(result["failed"]) == 1
+    assert ops.stage(root=repo)["count"] == 1
+
+
+def test_adapt_tool_hands_off_and_never_blocks(repo, monkeypatch):
+    import json
+
+    from slipbox import atomizer, tools
+
+    ops.setup(repo)
+    ops.capture("Rivers", "Water flows downhill.", root=repo)
+
+    submitted = {}
+    monkeypatch.setattr(atomizer, "submit",
+                        lambda entries, root, repo=None: submitted.update(
+                            entries=entries) or {"job": "adapt-test",
+                                                 "status": "queued",
+                                                 "entries": entries,
+                                                 "backend": "local",
+                                                 "model": "m"})
+
+    # No `idents` → the whole usable inbox, and the call returns a job at once.
+    result = json.loads(tools.slipbox_adapt({}))
+    assert result["job"] == "adapt-test" and result["status"] == "queued"
+    assert len(submitted["entries"]) == 1
+
+    # Disabled, the tool refuses rather than silently letting the host distil.
+    monkeypatch.setenv("SLIPBOX_ATOMIZER", "0")
+    assert "error" in json.loads(tools.slipbox_adapt({}))
+
+
+def test_atomizer_backend_status_never_loads_the_model(monkeypatch):
+    from slipbox import atomizer, models
+
+    # A status probe that pulled 24B of weights would be unusable in `doctor`.
+    monkeypatch.setattr(models, "judge",
+                        lambda: pytest.fail("status must not load the judge"))
+    monkeypatch.setattr(models, "judge_importable", lambda: True)
+    status = atomizer.backend_status()
+    assert status["backend"] == "local" and status["reachable"] is True
+
+
+def test_atomizer_reads_model_and_instructions_from_plugin_config(monkeypatch):
+    from slipbox import config as cfg
+
+    # Plugin config outranks the environment; the environment outranks defaults.
+    monkeypatch.setattr(cfg, "_PLUGIN_CONFIG", None)
+    monkeypatch.setenv("SLIPBOX_ATOMIZER_MODEL", "from-env")
+    assert cfg.atomizer_model() == "from-env"
+
+    monkeypatch.setattr(cfg, "_PLUGIN_CONFIG",
+                        {"atomizer": {"model": "from-plugin-config",
+                                      "instructions": "Do it this way.",
+                                      "backend": "host", "max_atoms": 3}})
+    assert cfg.atomizer_model() == "from-plugin-config"
+    assert cfg.atomizer_instructions() == "Do it this way."
+    assert cfg.atomizer_backend() == "host"
+    assert cfg.atomizer_max_atoms() == 3
+
+    # An unknown backend falls back to `local` rather than failing at call time.
+    monkeypatch.setattr(cfg, "_PLUGIN_CONFIG", {"atomizer": {"backend": "wat"}})
+    assert cfg.atomizer_backend() == "local"
+
+    # With nothing configured the shipped contract is used, not an empty prompt.
+    monkeypatch.setattr(cfg, "_PLUGIN_CONFIG", {})
+    monkeypatch.delenv("SLIPBOX_ATOMIZER_MODEL", raising=False)
+    assert "exactly one idea" in cfg.atomizer_instructions()

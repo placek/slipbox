@@ -1,7 +1,7 @@
 ---
 name: adapt
-description: Distil an inbox capture into a source note plus atomic notes staged for review — move the media into the source's cold store, summarize the source, split into one-idea atoms each with a proposed ID, and scope-classify. Triggered by slipbox:adapt [entry] and the auto-adapt job.
-version: 0.1.0
+description: Hand an inbox capture to the dedicated atomiser agent, which distils it in the background — source note, atomic notes with proposed IDs, media into cold storage. Triggered by slipbox:adapt [entry] and the auto-adapt job.
+version: 0.2.0
 author: Paweł Płaczyński
 metadata:
   hermes:
@@ -12,61 +12,55 @@ metadata:
 # slipbox:adapt — CARP Stage 2 (distillation)
 
 ## When to use
-`slipbox:adapt` (take the oldest usable inbox entry) or `slipbox:adapt <entry>`.
-Also the job of the nightly auto-adapt run. You do the reasoning; the tools do the
-mechanics. **You never write to `store/`** — atoms wait for a human.
+`slipbox:adapt` (sweep every usable inbox entry) or `slipbox:adapt <entry>`.
 
-## The strict workflow
-Adapting one inbox entry produces exactly this, in order:
+## You do not distil
+Distillation is **not your job**. It belongs to the *dedicated atomiser agent* —
+its own model, its own instructions, its own clean context, running off this
+conversation. Your job is to dispatch it and report.
 
-1. **Move the media into the source's cold store.** The capture's attachments live
-   in `inbox/.attachments/`. They belong to the *source*, so they are moved into
-   `source/.attachments/<slug>/` — this happens when you pass their filenames to
-   `slipbox_source` (step 3, `attachments:`). Nothing is copied twice; the media
-   travels with its bibliography note.
+This matters for three reasons, and they are the reason the agent exists:
+distilling inline would block the conversation; it would let whatever was said
+earlier leak into what the store means; and it would make the nightly unattended
+run impossible.
 
-2. **Summarize the source.** Read the inbox entry (`slipbox_show area=inbox`).
-   Write a brief, selective **summary in your own words** — a literature note, not
-   a copy. This becomes the source note's body.
+## The workflow
 
-3. **Create the source note.** First dedup: `slipbox_lookup spaces=['source']` on
-   the title/author/subject and read the top hits — the same source cited two ways
-   must not become two notes. Reuse what exists; otherwise `slipbox_source` with
-   the summary as `description` and the metadata the workflow requires:
-   **name (title), author, date, topic, tags**, plus `reference`, `accessed`, and
-   the media filenames in `attachments` (moved per step 1, linked in the note).
-   Keep the returned wikilink — the atoms cite it.
+1. **Dispatch.** Call `slipbox_adapt` with the entry (`idents: ['<entry>']`), or
+   with no arguments to sweep the whole inbox oldest-first.
+2. **Report and stop.** The tool returns a **job id** immediately. Tell the user
+   what is being distilled, which model is doing it, and that the atoms will
+   appear in `stage/`. Then carry on with whatever else was asked.
+3. **Do not wait.** Do not poll in a loop, do not re-dispatch the same entry, and
+   do not start writing atoms yourself while the job runs.
 
-4. **Split into atomic notes.** Deconstruct the entry into **one idea per note**,
-   in your own words, understandable without the source, screen-sized. For each,
-   `slipbox_atom`:
-   - `body` — the single thought; cite the source wikilink; link related notes it
-     extends/refines/contradicts in the body (`[[21-a]]`),
-   - `link_after` — the existing store ID it continues, or omit / pass
-     `candidates:['new-thread']` to open a new thread,
-   - `variants` — 2–3 alternative titles for review,
-   - `scope` — `in` / `adjacent` / `out` against the `SOUL.md` charter (+ one
-     sentence `scope_rationale`),
-   - attachments an atom *itself* needs (a graph, a chart, an image) go in
-     `attachments:` — they land in `stage/.attachments/` linked to the note.
-   Each call returns a **`proposed_id`** — the concrete Folgezettel ID the atom
-   will carry into the store. To build a thread, pass the previous atom's
-   `proposed_id` as the next atom's `link_after` (e.g. head → `1`, then
-   `link_after:'1'` → `1-a`, again → `1-b`). A near-identical existing note is
-   auto-flagged as a potential duplicate — a signal for review, never a drop.
+If the user later asks how it went, call `slipbox_adapt_status` (optionally with
+the `job` id). It reports what was distilled, how many atoms each entry yielded,
+what failed, and whether the configured model is reachable at all.
 
-5. **Archive the original.** When every usable thought is extracted,
-   `slipbox_archive_original` with the entry and its source — the full extraction
-   moves into `source/.attachments/<slug>/` (cold storage, outside the index),
-   enabling a future `slipbox:readapt`. Nothing is destroyed.
+What the agent produces, per entry: the capture's media moved into
+`source/.attachments/<slug>/`, a source note carrying the literature summary and
+the bibliography, one staged atom per idea — each with a **proposed Folgezettel
+ID**, 2–3 title variants, a scope classification and a placement rationale — and
+the original extraction archived into cold storage. Every step commits. Nothing
+reaches `store/`: the atoms wait for human review.
 
-Report the source created/reused and each atom's title and **proposed ID**. The
-atoms now await human review — **do not persist them.**
+## When the atomiser is unavailable
+`slipbox_adapt` reports an error when the agent is disabled (`atomizer.enabled`)
+or its model cannot be loaded. That is the *only* case in which you distil by
+hand — and you should say plainly that you are standing in for an unreachable
+agent, because the result carries your voice, not the store's.
+
+The manual path, in order: read the entry (`slipbox_show area=inbox`); summarize
+it in your own words; dedup with `slipbox_lookup spaces=['source']` and create
+or reuse the source note via `slipbox_source` (passing the capture's attachment
+filenames, which moves them); split into one-idea atoms with `slipbox_atom`,
+chaining a thread by passing each returned `proposed_id` as the next atom's
+`link_after`; finish with `slipbox_archive_original`.
 
 ## Rules
-- Better three sharp notes than ten restatements of one sentence. Apply the
-  relevance test: an atom must add to a store discussion or open a new line of
-  thought. Dis-confirming material is the *most* valuable — link and flag it.
+- **You never write to `store/`.** Atoms wait for a human.
+- Better three sharp notes than ten restatements of one sentence.
 - One idea per note; complexity is built from links between simple notes.
 - Never edit an existing store note. A correction is a *new* note with
   `supersedes [[ID]]`.

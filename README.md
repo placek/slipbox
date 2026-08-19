@@ -20,7 +20,7 @@ capture ─▶ inbox/ ─── adapt ──▶ stage/ ─── review ──�
 | Stage | Skill | What happens |
 |-------|-------|--------------|
 | 1 Capture | `slipbox:capture` | Raw material lands in `inbox/` verbatim, with attribution. |
-| 2 Adapt | `slipbox:adapt` | Split into one-idea atoms in `stage/`, each assigned its **proposed Folgezettel ID** (which also names the file) from the placement lookup; embed at once; scope-classify; cache placement; archive the original into cold storage. |
+| 2 Adapt | `slipbox:adapt` | Handed to the **dedicated atomiser agent**, which distils in the background: one-idea atoms in `stage/`, each assigned its **proposed Folgezettel ID** (which also names the file) from the placement lookup; embed at once; scope-classify; cache placement; archive the original into cold storage. |
 | 3 Review | `slipbox:review` | The human quality gate — accept/reject whole per-source batches; shape titles, placement, duplicates. |
 | 4 Persist | `slipbox:link` (alias `persist`) | Accepted atoms are **moved** into `store/` under the ID assigned at adapt (a human override re-derives it), immutable forever; rejected ones are purged. |
 | — Retrieve | `slipbox:search` | Answer questions with claim-by-claim citations. |
@@ -57,6 +57,7 @@ tools fall in three groups (`__init__._active_schemas`):
 | `slipbox_index` | `index.md` parsed into a nested topic map with entry-note IDs. |
 | `slipbox_original` | A source's archived original from cold storage — deliberate, quarantined, never embedded (powers `readapt`). |
 | `slipbox_status` · `slipbox_log` · `slipbox_schedule` | Backlog counters + drift signal; a note's git history; cron/job/lock state. |
+| `slipbox_adapt_status` | Progress of the background distillation jobs, and whether the atomiser's model is reachable. |
 
 **Gated — the interactive read path** (`slipbox_search`, `slipbox_quote`): the
 cited-summary channel. The whitepaper reserves it for when the models are
@@ -71,14 +72,15 @@ jobs and ends in a git commit:
 |-------|-------|
 | 0 Setup | `slipbox_setup` — create the layout, seed `index.md` / `SOUL.md`, init `embeddings.db`; idempotent, and fired automatically on the first session (`on_session_start`). |
 | 1 Capture | `slipbox_capture` |
-| 2 Adapt | `slipbox_source` · `slipbox_atom` · `slipbox_scope` · `slipbox_move_attachments` · `slipbox_archive_original` · `slipbox_drop_inbox` |
+| 2 Adapt | `slipbox_adapt` · `slipbox_readapt` — hand distillation to the **dedicated atomiser agent** (returns a job id, never blocks). The mechanics it drives, also callable directly when the agent is off: `slipbox_source` · `slipbox_atom` · `slipbox_scope` · `slipbox_move_attachments` · `slipbox_archive_original` · `slipbox_drop_inbox` |
 | 3 Review | `slipbox_review` |
 | 4 Persist | `slipbox_persist` |
 | Topic map | `slipbox_index_add` · `slipbox_index_write` |
 | Housekeeping | `slipbox_purge_rejected` · `slipbox_reindex` |
 
-The mechanical slash commands (`/slipbox-status`, `/slipbox-digest`, `/slipbox-inbox`,
-`/slipbox-stage`, `/slipbox-store`, `/slipbox-show`, `/slipbox-accept`, `/slipbox-reject`,
+The mechanical slash commands (`/slipbox-adapt`, `/slipbox-adapt-status`,
+`/slipbox-status`, `/slipbox-digest`, `/slipbox-inbox`, `/slipbox-stage`,
+`/slipbox-store`, `/slipbox-show`, `/slipbox-accept`, `/slipbox-reject`,
 `/slipbox-help`) and the `slipbox …` terminal CLI in `commands.py` cover the same
 ground without an LLM in the loop.
 
@@ -123,19 +125,70 @@ a topic matching the query, so keep the topic map populated (`slipbox:consolidat
 |------|-----------|---------------|
 | embedder | `BAAI/bge-m3` (1024-dim dense) | in-process, CPU |
 | reranker | `BAAI/bge-reranker-v2-m3` (cross-encoder) | in-process, CPU |
-| judge | ~24B generalist | the host agent — or an in-process fallback when headless |
+| judge / atomiser | ~24B generalist (`atomizer.model`) | the **dedicated atomiser agent**, in-process by default |
 
 The GPU belongs to the conversational model; CARP runs on CPU, asynchronously.
 The semantic layer **degrades gracefully** — with no models installed the store
 still captures, adapts, reviews, persists and greps; lookup falls back to token
 overlap and a brute-force cosine scan.
 
+## The atomiser — distillation is a dedicated agent
+
+Atomisation does **not** run on the host conversational agent. It runs as a
+dedicated agent with its own model, its own instructions and its own clean
+context, off the conversation — because distilling inline blocks the chat, lets
+whatever was said earlier leak into what the store means, and makes an
+unattended nightly run impossible.
+
+Every trigger routes through it, manual or scheduled: `slipbox_adapt`,
+`/slipbox-adapt`, `slipbox:adapt`, `slipbox:triage`, `slipbox:readapt`
+(re-reading an archived original) and the `auto-adapt` cron job
+(`slipbox adapt`). The call returns a **job id immediately**; the atoms appear in
+`stage/` as the agent commits them, and `slipbox_adapt_status` reports progress.
+
+The agent only ever *proposes*: it returns a JSON plan which is validated and
+bounded before the deterministic operations execute it, and a human still
+reviews every atom. A hallucinated link target costs that one atom, not the
+distillation.
+
+Configured from **plugin configuration** (`plugins.entries.slipbox.atomizer.*`
+in hermes' `config.yaml`), falling back to `SLIPBOX_ATOMIZER_*` env vars, then to
+shipped defaults:
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| `enabled` | `true` | Off restores hand-distillation by the host agent. |
+| `backend` | `local` | `local` = the in-process judge, nothing leaves the machine. `host` = hermes' own LLM lane (`ctx.llm`), which needs `plugins.entries.slipbox.llm.allow_model_override` to steer the model. |
+| `model` | the judge model | Which model distils. |
+| `instructions` | `templates/ATOMIZER.md` | The composition contract. Inline text or a path. Overriding it deliberately changes what the store *means*. |
+| `max_atoms` | `12` | Ceiling per entry — better three sharp notes than ten restatements. |
+| `candidates` | `12` | Related store notes shown as placement candidates. |
+| `max_chars` / `max_tokens` | `24000` / `4096` | Input and generation bounds. |
+| `temperature` | `0.1` | Near-greedy: faithfulness, not invention. |
+| `retries` | `2` | Re-asks when the returned JSON is unusable. |
+
+```yaml
+# ~/.hermes/config.yaml
+plugins:
+  entries:
+    slipbox:
+      atomizer:
+        backend: local
+        model: mistralai/Mistral-Small-Instruct-2409
+        instructions: /path/to/my-contract.md   # or inline text
+```
+
+`slipbox doctor` reports whether the configured model is reachable — with a
+*cheap* probe that never pulls the weights.
+
 ## Automation
 
-Three scheduled jobs take `flock`-based locks shared with the manual skills:
-`auto-adapt` (nightly distillation), the single-instance `persist` job
-(`slipbox persist-accepted`), and the morning `digest` (`slipbox digest`).
-`slipbox_schedule` reports their state.
+Four scheduled jobs take `flock`-based locks shared with the manual skills:
+`auto-adapt` (nightly distillation by the atomiser agent, `slipbox adapt`), the
+single-instance `persist` job (`slipbox persist-accepted`), the morning `digest`
+(`slipbox digest`), and `reindex`. `slipbox_schedule` reports their state. The
+atomiser holds its own lock name, so a manual distillation and the cron sweep
+serialise instead of racing.
 
 ## Multiple knowledge bases (one instance, several repos)
 
@@ -169,6 +222,7 @@ slipbox/
 ├── indexmd.py         the nested topic map (index.md)
 ├── embeddings.py      sqlite-vec store, three vector tables, freshness
 ├── models.py          in-process embedder / reranker / judge (lazy singletons)
+├── atomizer.py        the dedicated distillation agent + its background jobs
 ├── lookup.py          the shared four-layer mechanism + dedup signal
 ├── operations.py      the CARP lifecycle — what the tools actually do
 ├── schemas.py         tool schemas (what the LLM sees)
@@ -179,6 +233,7 @@ slipbox/
 ├── plugin.yaml        the hermes-agent manifest
 ├── requirements.txt   optional semantic-layer deps (embedder, reranker, judge)
 ├── templates/SOUL.md  the deployment SOUL seed (fill in the domain charter)
+├── templates/ATOMIZER.md  the atomiser's default instructions (the contract)
 └── skills/            capture · adapt · review · link · search
                        · triage · readapt · consolidate · oversight
 ```

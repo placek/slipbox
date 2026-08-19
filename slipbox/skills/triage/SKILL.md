@@ -29,11 +29,16 @@ it walks the *whole* inbox rather than one entry. For a single capture, use
    recapture or dropping (`slipbox_drop_inbox` with `reason=rejected` only if the
    contributor agrees). They are the digest's "recapture or drop" line.
 
-3. **Adapt each usable entry**, oldest first, by running the **`slipbox:adapt`**
-   workflow per entry: reuse-or-create the source, split into atoms, cache
-   placement, scope-classify, move attachments, archive the original. Keep going
-   through the batch; a hard entry that won't atomise cleanly is left in the inbox
-   with a note, not force-split.
+3. **Dispatch the usable entries to the atomiser.** One `slipbox_adapt` call with
+   the entries you selected (`idents: [...]`) — or no arguments to take the whole
+   usable inbox. The **dedicated atomiser agent** distils them in the background,
+   oldest first: reuse-or-create the source, split into atoms, cache placement,
+   scope-classify, move attachments, archive the original.
+
+   You do **not** distil any of them yourself and you do not wait for the job.
+   Report the job id, then move on; `slipbox_adapt_status` tells you how far it
+   has got. An entry the agent cannot atomise cleanly is reported as failed and
+   left in the inbox, not force-split.
 
 4. **Respect backpressure.** If `slipbox_status` shows the pending-review queue
    already high, say so and suggest a review pass before adding more — capture and
@@ -41,14 +46,16 @@ it walks the *whole* inbox rather than one entry. For a single capture, use
    mode that quietly kills review-gated systems. Offer `--limit`-style bounding:
    process the oldest N and stop.
 
-5. **Report a digest.** Per source: how many atoms staged; which entries were
-   archived; which failed and why; the new pending-review total. End by pointing
-   at `slipbox:review` — nothing you produced is in the store; it all awaits a
-   human.
+5. **Report a digest.** Once the job reports done (`slipbox_adapt_status`), per
+   source: how many atoms staged; which entries were archived; which failed and
+   why; the new pending-review total. End by pointing at `slipbox:review` —
+   nothing the agent produced is in the store; it all awaits a human.
 
 ## Rules
-- One capture at a time, sequentially — the local judge is single-threaded; do not
-  claim to have parallelised.
+- One capture at a time, sequentially — the atomiser holds a single lock and
+  distils in order; do not claim to have parallelised.
+- The atoms are the *agent's* work, not yours. Do not rewrite, "improve", or
+  re-split them here — re-splitting is a review-time action.
 - Never persist here. Triage fills `stage/`; review and the persist job take it
   from there.
 - Better to under-atomise a hard source and flag it for `slipbox:review`

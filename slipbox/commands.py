@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from . import config, embeddings, lookup, models, operations
+from . import atomizer, config, embeddings, lookup, models, operations
 
 HELP = """\
 🧠 slipbox — a curated, agent-operated knowledge base
@@ -21,12 +21,14 @@ WHAT IT IS
 
 SKILLS — interactive, they use the conversation
   slipbox:capture <source>   store a page / image / thought in the inbox
-  slipbox:adapt [entry]      split an inbox entry into atomic notes + source note
+  slipbox:adapt [entry]      hand an entry to the background atomiser agent
   slipbox:review             accept/reject pending atoms per source, shape them
   slipbox:link [entry]       place an accepted atom in the store (alias: persist)
   slipbox:search <question>  answer from the store, with references
 
 QUICK COMMANDS — instant, no LLM
+  /slipbox-adapt [entry]     distil in the background (dedicated atomiser agent)
+  /slipbox-adapt-status      how the background distillation is going
   /slipbox-status            backlog counters
   /slipbox-digest            the morning digest (backlog + pending review)
   /slipbox-inbox             inbox entries
@@ -39,7 +41,13 @@ QUICK COMMANDS — instant, no LLM
 
 TERMINAL
   slipbox {setup|status|digest|inbox|stage|store|show|lookup|accept|reject
-          |persist|persist-accepted|purge|schedule|doctor|reindex|help}
+          |adapt|persist|persist-accepted|purge|schedule|doctor|reindex|help}
+
+THE ATOMISER — distillation is a dedicated agent, not the host
+  Atomisation runs off the conversation with its own model and instructions
+  (plugins.entries.slipbox.atomizer.* / SLIPBOX_ATOMIZER_*). Every trigger uses
+  it: /slipbox-adapt, slipbox:adapt, slipbox:readapt and the nightly auto-adapt
+  job (`slipbox adapt`). `slipbox doctor` reports whether its model is reachable.
 
 RULES OF THE HOUSE
   • One thought per note, in your own words, screen-sized.
@@ -231,7 +239,42 @@ def cmd_reject(raw: str = "", root=None) -> str:
     return f"rejected: {result['title']} (purged by the next persist job)"
 
 
+def cmd_adapt(raw: str = "", root=None) -> str:
+    """Hand an entry (or the whole inbox) to the background atomiser agent."""
+    root = _cmd_root(root)
+    if not config.atomizer_enabled():
+        return "The dedicated atomiser is disabled (atomizer.enabled)."
+    ident = (raw or "").strip()
+    idents = [ident] if ident else atomizer.pending_entries(root)
+    if not idents:
+        return "inbox is empty — nothing to distil."
+    job = atomizer.submit(idents, root)
+    return (
+        f"Distilling {len(idents)} entr{'y' if len(idents) == 1 else 'ies'} in the "
+        f"background — job {job['job']} on {job['backend']}:{job['model']}.\n"
+        f"Atoms land in stage/ as they are written; /slipbox-adapt-status to check."
+    )
+
+
+def cmd_adapt_status(raw: str = "", root=None) -> str:
+    recent = atomizer.jobs(10)
+    agent = atomizer.backend_status()
+    header = (f"atomiser: {agent['backend']}:{agent['model']} — "
+              f"{'reachable' if agent['reachable'] else 'UNREACHABLE ' + agent['detail']}")
+    if not recent:
+        return f"{header}\nNo distillation jobs this session."
+    lines = [header]
+    for job in recent:
+        done, failed = len(job.get("done") or []), len(job.get("failed") or [])
+        atoms = sum(d.get("atom_count", 0) for d in (job.get("done") or []))
+        lines.append(f"  {job['id']}  {job.get('status', '?'):8} "
+                     f"{done} distilled ({atoms} atoms), {failed} failed")
+    return "\n".join(lines)
+
+
 COMMANDS = (
+    ("slipbox-adapt", cmd_adapt, "Distil inbox entries in the background: [entry]"),
+    ("slipbox-adapt-status", cmd_adapt_status, "Background distillation progress"),
     ("slipbox-status", cmd_status, "Slipbox backlog counters"),
     ("slipbox-digest", cmd_digest, "Morning digest: backlog + pending review"),
     ("slipbox-inbox", cmd_inbox, "List inbox entries"),
@@ -253,7 +296,8 @@ def _print_json(payload) -> None:
 # Commands that run over EVERY configured repo (or the one named by --repo):
 # first-run setup and the scheduled/maintenance jobs. Everything else is a query
 # against a single repo (--repo, else the default/first).
-_PER_REPO_COMMANDS = ("setup", "digest", "persist-accepted", "purge", "reindex", "schedule", "doctor")
+_PER_REPO_COMMANDS = ("setup", "digest", "persist-accepted", "purge", "reindex",
+                      "schedule", "doctor", "adapt")
 
 
 def _targets(args) -> list:
@@ -279,10 +323,50 @@ def _run_job(command: str, args, root) -> None:
         operations.record_job("reindex", started,
                               "failed" if report.get("error") else "ok", str(report), root)
         _print_json(report)
+    elif command == "adapt":
+        _run_adapt(args, root)
     elif command == "schedule":
         _print_json(operations.schedule(root))
     elif command == "doctor":
         _print_json(doctor(root))
+
+
+def _run_adapt(args, root) -> None:
+    """The auto-adapt job: distillation by the dedicated agent, not by an agent
+    reading a skill.
+
+    Runs synchronously by default because cron owns the process — handing the
+    work to a daemon thread and returning would let the interpreter exit mid
+    distillation. `--background` exists for a human at a terminal who wants the
+    prompt back; the run is recorded either way so `slipbox schedule` can report
+    on a job nobody watched.
+    """
+    if not config.atomizer_enabled():
+        print("the dedicated atomiser is disabled (atomizer.enabled) — nothing to do.")
+        return
+    started = operations.stamp()
+    ident = getattr(args, "ident", None)
+    background = getattr(args, "background", False)
+    try:
+        if ident:
+            report = (atomizer.submit([ident], root) if background
+                      else {"done": [atomizer.distil(ident, root)], "failed": []})
+        else:
+            report = atomizer.run_sweep(root, wait=not background)
+    except atomizer.AtomizerError as exc:
+        operations.record_job("auto-adapt", started, "failed", str(exc), root)
+        print(f"auto-adapt failed: {exc}")
+        return
+    outcome = "failed" if report.get("failed") and not report.get("done") else "ok"
+    operations.record_job("auto-adapt", started, outcome, _adapt_detail(report), root)
+    _print_json(report)
+
+
+def _adapt_detail(report: dict) -> str:
+    done = report.get("done") or []
+    failed = report.get("failed") or []
+    atoms = sum(d.get("atom_count", 0) for d in done if isinstance(d, dict))
+    return f"{len(done)} distilled, {atoms} atoms, {len(failed)} failed"
 
 
 # CLI subcommands that only read — the surface a read-only deployment keeps.
@@ -357,6 +441,7 @@ def doctor(root=None) -> dict:
         "semantic_enabled": config.semantic_enabled(),
         "embeddings_reachable": embeddings.available(),
         "reranker_available": models.reranker_available(),
+        "atomizer": atomizer.backend_status(),
         "freshness": lookup.freshness(root),
     }
     try:
@@ -427,6 +512,14 @@ def setup_argparse(subparser) -> None:
     add("purge", help="Delete rejected atoms")
     add("schedule", help="Cron schedule and job state")
     add("doctor", help="Check embeddings, index and configuration")
+
+    p_adapt = add("adapt", help="Distil inbox entries with the dedicated atomiser "
+                                "agent (scheduled job 1: auto-adapt)")
+    p_adapt.add_argument("ident", nargs="?", default=None,
+                         help="One inbox entry; omit to sweep the whole inbox")
+    p_adapt.add_argument("--background", action="store_true",
+                         help="Hand off and return at once instead of waiting "
+                              "(never use from cron — the process would exit first)")
 
     p_reindex = add("reindex", help="Sync embeddings.db with the notes")
     p_reindex.add_argument("--full", action="store_true", help="Rebuild from scratch")

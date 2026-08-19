@@ -203,6 +203,28 @@ def judge_available() -> bool:
         return False
 
 
+def judge_resident() -> bool:
+    """Whether the judge is already loaded. Free — touches nothing."""
+    return _JUDGE is not None
+
+
+def judge_importable() -> bool:
+    """Can the judge's libraries be imported at all?
+
+    A *cheap* liveness probe: it answers "would loading stand a chance" without
+    pulling ~24B of weights. Status surfaces (`doctor`, the atomiser's backend
+    report) must never trigger a real load — a health check that costs minutes of
+    GPU time and gigabytes of RAM is one nobody can afford to run.
+    """
+    try:
+        import torch  # type: ignore[import-not-found]  # noqa: F401
+        import transformers  # type: ignore[import-not-found]  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
 def unload_judge() -> None:
     """Release the judge's VRAM (it is lazy-loaded and rarely resident)."""
     global _JUDGE
