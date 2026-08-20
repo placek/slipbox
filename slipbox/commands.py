@@ -35,7 +35,8 @@ QUICK COMMANDS — instant, no LLM
   /slipbox-stage [status]    atoms awaiting review
   /slipbox-store [prefix]    the store in Folgezettel order
   /slipbox-show <id>         render a note
-  /slipbox-accept <e> [id]   mark reviewed: accepted (optionally: follows <id>)
+  /slipbox-accept <e> [id]   mark reviewed: accepted (id RELOCATES; omit it
+                             to keep the position proposed at adapt)
   /slipbox-reject <e>        mark reviewed: rejected (purged by the persist job)
   /slipbox-help              this help
 
@@ -131,7 +132,8 @@ def morning_digest(root=None) -> str:
     if pending["count"]:
         lines += [
             "",
-            "Accept a batch with `/slipbox-accept <entry> [most-connected-id]`, "
+            "Accept a batch with `/slipbox-accept <entry>` (the atom keeps the "
+            "position proposed at adapt; add an id only to relocate it), "
             "reject with `/slipbox-reject <entry>`.",
         ]
     return "\n".join(lines)
@@ -216,7 +218,9 @@ def cmd_show(raw: str = "", root=None) -> str:
 def cmd_accept(raw: str = "", root=None) -> str:
     parts = (raw or "").split()
     if not parts:
-        return "Usage: /slipbox-accept <entry> [most-connected-id]"
+        return ("Usage: /slipbox-accept <entry> [relocate-after-id]\n"
+                "The id is an OVERRIDE — omit it to keep the position "
+                "proposed at adapt.")
     try:
         result = operations.review(
             parts[0], config.REVIEW_ACCEPTED, parts[1] if len(parts) > 1 else None,
@@ -281,7 +285,7 @@ COMMANDS = (
     ("slipbox-stage", cmd_stage, "List atoms awaiting review"),
     ("slipbox-store", cmd_store, "List the store in Folgezettel order"),
     ("slipbox-show", cmd_show, "Render a note: <id|path|title>"),
-    ("slipbox-accept", cmd_accept, "Accept an atom: <entry> [most-connected-id]"),
+    ("slipbox-accept", cmd_accept, "Accept an atom: <entry> [relocate-after-id]"),
     ("slipbox-reject", cmd_reject, "Reject an atom: <entry>"),
     ("slipbox-help", cmd_help, "How to use the slipbox plugin"),
 )

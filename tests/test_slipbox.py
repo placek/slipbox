@@ -693,3 +693,77 @@ def test_a_model_that_placed_atoms_is_not_second_guessed():
     # A single atom has nothing to thread onto.
     solo = atomizer.parse_plan(_plan_json([_atom("only")]))
     assert solo["atoms"][0]["continues"] is None
+
+
+def test_skill_bundle_tracks_the_registered_skills(tmp_path, monkeypatch):
+    from slipbox import bundle, config as cfg
+
+    monkeypatch.setattr(cfg, "_PLUGIN_CONFIG", {})
+    monkeypatch.setenv("HERMES_BUNDLES_DIR", str(tmp_path / "skill-bundles"))
+
+    path = bundle.install(["capture", "adapt", "search"])
+    assert path is not None and path.name == "slipbox.yaml"
+    text = path.read_text()
+    # Entries are QUALIFIED: a bundle resolves members through skill_view(),
+    # which reads `plugin:skill` as plugin-provided. Bare names would miss,
+    # because plugin skills never enter the flat ~/.hermes/skills tree.
+    assert '"slipbox:capture"' in text and '"slipbox:search"' in text
+    assert '"slipbox:review"' not in text        # only what was registered
+
+    # Idempotent — hermes caches bundles on mtime, so an identical rewrite
+    # every startup would churn the cache for nothing.
+    before = path.stat().st_mtime_ns
+    bundle.install(["capture", "adapt", "search"])
+    assert path.stat().st_mtime_ns == before
+
+    # A changed skill set IS rewritten.
+    bundle.install(["search"])
+    assert '"slipbox:capture"' not in path.read_text()
+
+    # Switched off, nothing is written.
+    monkeypatch.setenv("SLIPBOX_BUNDLE", "0")
+    other = tmp_path / "off"
+    monkeypatch.setenv("HERMES_BUNDLES_DIR", str(other))
+    assert bundle.install(["capture"]) is None
+    assert not other.exists()
+
+
+def test_skill_bundle_is_skipped_when_there_is_no_hermes_home(tmp_path, monkeypatch):
+    from slipbox import bundle, config as cfg
+
+    # Guessing ~/.hermes would plant a bundle in whichever profile owns that
+    # path. With no hermes and no HERMES_HOME there is nothing to write for.
+    monkeypatch.setattr(cfg, "_PLUGIN_CONFIG", {})
+    monkeypatch.delenv("HERMES_BUNDLES_DIR", raising=False)
+    monkeypatch.delenv("HERMES_HOME", raising=False)
+    monkeypatch.setattr(bundle, "_bundles_dir", lambda: None)
+    assert bundle.install(["capture"]) is None
+
+
+def test_persist_schema_does_not_invite_chaining():
+    """The tool description is the strongest signal an agent gets.
+
+    A real store was built with a six-level chain (1 → 1-a → 1-a-1 → …) from a
+    flat batch of siblings, because this schema still described the pre-proposal
+    model: "assign the ID that follows the most-connected note". A diligent agent
+    supplied one per atom, and the most-connected note in a batch is the sibling
+    it just placed. The skill body said the opposite, and lost — schemas outrank
+    prose.
+    """
+    from slipbox import schemas
+
+    persist = next(s for s in schemas.WRITING if s["name"] == "slipbox_persist")
+    after = persist["parameters"]["properties"]["after"]["description"]
+
+    # The default path must be stated as "pass nothing".
+    assert "VERBATIM" in persist["description"]
+    assert "OVERRIDE ONLY" in after
+    # And the specific trap must be named, not merely left unmentioned.
+    assert "previously persisted" in after
+
+    # No surface may still describe placement as following the most-connected
+    # note — that model died when adapt started assigning the ID.
+    for schema in (*schemas.READ_ONLY, *schemas.GATED, *schemas.WRITING):
+        blob = str(schema)
+        assert "most-connected" not in blob, schema["name"]
+        assert "most connected" not in blob, schema["name"]

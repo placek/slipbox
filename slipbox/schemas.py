@@ -354,7 +354,11 @@ SLIPBOX_ATOM = {
             },
             "link_after": {
                 "type": "string",
-                "description": "Folgezettel ID of the most-connected note, when already known.",
+                "description": (
+                    "The store ID this atom continues, elaborates or contradicts — "
+                    "the basis its proposed ID is derived from. To build a thread "
+                    "from one source, pass the previous atom's returned proposed_id."
+                ),
             },
             "new_thread_topic": {
                 "type": "string",
@@ -475,10 +479,10 @@ SLIPBOX_REVIEW = {
         "CARP Stage 3. Set the review status of a stage/ entry — the only kind of "
         "change allowed there. 'accepted' entries are persisted by the persist job, "
         "'rejected' ones are purged (only the new atom is ever removed, never the "
-        "existing one). Optionally record link_after (the most-connected note, "
-        "taking the placement decision over from the automation), variant_of (a "
-        "flagged duplicate accepted as a newer version — placed next to its twin), "
-        "or new_thread_topic. Commits."
+        "existing one). Record link_after ONLY when the human is relocating the "
+        "atom away from the position it was proposed at adapt — it discards that "
+        "proposal. Also variant_of (a flagged duplicate accepted as a newer "
+        "version — placed next to its twin), or new_thread_topic. Commits."
     ),
     "parameters": {
         "type": "object",
@@ -507,19 +511,31 @@ SLIPBOX_REVIEW = {
 SLIPBOX_PERSIST = {
     "name": "slipbox_persist",
     "description": (
-        "CARP Stage 4. Move a stage/ note into the store: assign the Folgezettel ID "
-        "that follows the most-connected note (computed fresh under the lock, never "
-        "cached), rename the file to the ID, move its vector vec_stage → vec_store "
-        "unchanged and its attachments, and optionally add it to index.md. "
-        "Placement comes from `after`, the entry's link_after / variant_of, the "
-        "cached placement.target_id, or new_thread=true. Store notes are immutable "
-        "afterwards — never renumbered. Put the reason in `rationale`. Commits."
+        "CARP Stage 4. Move a stage/ note into the store. The atom ALREADY CARRIES "
+        "the Folgezettel ID it was assigned at adapt, so the normal call is just "
+        "`ident` — persist APPLIES THAT PROPOSED ID VERBATIM. **Leave `after` empty "
+        "unless a human is deliberately relocating the atom**; supplying it "
+        "discards the proposal and re-derives the position, and chaining each atom "
+        "of a batch onto the one before it buries a flat set of siblings in a "
+        "needlessly deep thread. Renames the file to the ID, moves its vector "
+        "vec_stage → vec_store unchanged and its attachments, and optionally adds "
+        "it to index.md. Precedence: `after` > the entry's link_after / variant_of "
+        "> the proposed ID > new_thread=true. Store notes are immutable afterwards "
+        "— never renumbered. Put the reason in `rationale`. Commits."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "ident": {"type": "string", "description": "Path or title of the stage/ entry."},
-            "after": {"type": "string", "description": "Folgezettel ID of the most-connected note."},
+            "after": {
+                "type": "string",
+                "description": (
+                    "OVERRIDE ONLY — the store ID to place this atom after, when a "
+                    "human is moving it away from its proposed position. Omit for "
+                    "the normal case. Do not pass the previously persisted atom "
+                    "just to keep a batch together: they already share a thread."
+                ),
+            },
             "new_thread": {
                 "type": "boolean",
                 "description": "Open a new top-level thread instead (nothing connects).",

@@ -1,7 +1,7 @@
 ---
 name: link
-description: Place an accepted atom into the store under a fresh Folgezettel identifier, following the most-connected note, and add it to the topic map. Triggered by slipbox:link [entry] / slipbox:persist, and by the persist job.
-version: 0.1.0
+description: Place an accepted atom into the store under the Folgezettel ID it was assigned at adapt — persist applies that proposal verbatim, and `after` is an override for relocation only — and add it to the topic map. Triggered by slipbox:link [entry] / slipbox:persist, and by the persist job.
+version: 0.2.0
 author: Paweł Płaczyński
 metadata:
   hermes:

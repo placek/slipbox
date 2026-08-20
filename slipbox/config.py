@@ -351,6 +351,41 @@ def readonly() -> bool:
 # The deployment decides two things, both from plugin config (`atomizer.model`,
 # `atomizer.instructions`), which is why the reader above exists.
 
+# --- The skill bundle ---------------------------------------------------------
+#
+# One slash command that loads the plugin's skills together. Written by the
+# plugin at startup rather than installed by hand, so it tracks the skill set
+# instead of drifting from it — see `bundle.py`.
+
+def bundle_enabled() -> bool:
+    return _setting_bool("bundle.enabled", "SLIPBOX_BUNDLE", default=True)
+
+
+def bundle_name() -> str:
+    """The slash command (`/slipbox`). A bundle outranks a like-named skill."""
+    return _setting("bundle.name", "SLIPBOX_BUNDLE_NAME", default=PLUGIN_ID)
+
+
+def bundle_skills() -> list[str]:
+    """Narrow the bundle to these skills; empty means every registered one."""
+    raw = _setting("bundle.skills", "SLIPBOX_BUNDLE_SKILLS")
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def bundle_description() -> str:
+    return _setting(
+        "bundle.description", "SLIPBOX_BUNDLE_DESCRIPTION",
+        default="The slipbox knowledge base — the CARP write path "
+                "(capture, adapt, review, persist), retrieval, and the "
+                "higher-level maintenance workflows.",
+    )
+
+
+def bundle_instruction() -> str:
+    """Guidance injected above the skill bodies when the bundle is invoked."""
+    return _setting("bundle.instruction", "SLIPBOX_BUNDLE_INSTRUCTION")
+
+
 ATOMIZER_LOCAL = "local"      # the in-process judge (models.judge_generate)
 ATOMIZER_HOST = "host"        # the host's LLM lane (ctx.llm), hermes-routed
 ATOMIZER_BACKENDS = (ATOMIZER_LOCAL, ATOMIZER_HOST)

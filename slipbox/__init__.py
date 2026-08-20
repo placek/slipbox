@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from . import atomizer, commands, config, hooks, schemas, tools
+from . import atomizer, bundle, commands, config, hooks, schemas, tools
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,7 @@ def register(ctx) -> None:
 
     read_only = config.readonly()
     skills = 0
+    registered_skills: list[str] = []
     skills_dir = Path(__file__).parent / "skills"
     if skills_dir.is_dir():
         for child in sorted(skills_dir.iterdir()):
@@ -99,6 +100,7 @@ def register(ctx) -> None:
             if read_only and child.name not in READONLY_SKILLS:
                 continue  # a read-only agent gets only the read-path skill(s)
             ctx.register_skill(child.name, skill_md)
+            registered_skills.append(child.name)
             skills += 1
             for alias in SKILL_ALIASES.get(child.name, ()):
                 try:
@@ -106,8 +108,14 @@ def register(ctx) -> None:
                 except Exception as exc:  # noqa: BLE001 - aliases are optional
                     logger.debug("slipbox: alias %s not registered (%s)", alias, exc)
 
+    # The bundle is a derivative of what was just registered, so it is written
+    # here rather than installed by hand: a read-only deployment gets a bundle
+    # holding only its read-path skill, and a new skill joins on next start.
+    bundled = bundle.install(registered_skills)
+
     logger.info(
-        "Plugin slipbox %s%s: %d tools, %d commands, %d skills.",
+        "Plugin slipbox %s%s: %d tools, %d commands, %d skills%s.",
         __version__, " (read-only)" if read_only else "",
         registered, len(commands.COMMANDS), skills,
+        f", bundle /{config.bundle_name()}" if bundled else "",
     )
