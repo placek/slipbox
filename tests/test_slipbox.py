@@ -602,3 +602,51 @@ def test_atomizer_timeout_bounds_the_whole_proposal(repo, monkeypatch):
                           "already": [], "guidance": ""})
     assert len(calls) == 1                       # not 6: the budget stopped it
     assert time.monotonic() - started < 5
+
+
+def test_local_backend_uses_the_atomiser_model_not_the_judge(monkeypatch):
+    from slipbox import atomizer, config as cfg, models
+
+    # The atomiser and the judge are different roles with different models. The
+    # local path used to call judge_generate() with no name, which loaded the
+    # JUDGE — so configuring atomizer.model changed only what status reported.
+    monkeypatch.setattr(cfg, "_PLUGIN_CONFIG", {})
+    monkeypatch.setenv("SLIPBOX_ATOMIZER_MODEL", "atomiser/model")
+    monkeypatch.setenv("SLIPBOX_JUDGE_MODEL", "judge/model")
+
+    seen = {}
+
+    def fake_generate(messages, max_new_tokens=768, max_seconds=None, model_name=None):
+        seen["model"] = model_name
+        seen["max_seconds"] = max_seconds
+        return "{}"
+
+    monkeypatch.setattr(models, "judge_generate", fake_generate)
+    atomizer._generate_local("instructions", "prompt")
+    assert seen["model"] == "atomiser/model"
+    assert seen["max_seconds"] == cfg.atomizer_timeout()   # the budget is passed too
+
+
+def test_generative_models_are_cached_per_name(monkeypatch):
+    from slipbox import models
+
+    # One global singleton served whichever role loaded first; keyed by name,
+    # the atomiser and the judge can coexist in one process.
+    monkeypatch.setattr(models, "_GENERATORS", {})
+    monkeypatch.setattr(models, "mount_semantic_venv", lambda: None)
+    models._GENERATORS["a/model"] = ("model-a", "tok-a")
+    models._GENERATORS["b/model"] = ("model-b", "tok-b")
+    assert models.generator("a/model")[0] == "model-a"
+    assert models.generator("b/model")[0] == "model-b"
+    assert models.judge_resident() is True
+
+
+def test_reasoning_scratchpad_is_stripped_before_parsing():
+    from slipbox import atomizer
+
+    # A hybrid reasoning model prefixes its answer with a <think> block. It is
+    # not JSON and nobody parses it, so it must never reach the parser.
+    noisy = ("<think>Let me consider the atoms carefully...</think>\n"
+             + _plan_json([_atom("Kept")]))
+    plan = atomizer.parse_plan(noisy)
+    assert [a["title"] for a in plan["atoms"]] == ["Kept"]

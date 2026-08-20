@@ -139,7 +139,7 @@ _LOCK = threading.Lock()
 _EMBEDDER = None
 _RERANKER = None
 _RERANKER_OK: bool | None = None  # cached score-probe result (None = not yet probed)
-_JUDGE = None
+_GENERATORS: dict[str, tuple] = {}  # generative models, cached per model name
 
 
 def _resolve_device() -> str:
@@ -240,37 +240,84 @@ def reranker_available() -> bool:
 
 # --- Generative judge --------------------------------------------------------
 
-def judge():
-    """Load the generative judge (the headless in-process fallback)."""
-    global _JUDGE
-    if _JUDGE is not None:
-        return _JUDGE
+def generator(name: str | None = None):
+    """Load a generative model by name, cached per name for the process.
+
+    Keyed by name because the roles are genuinely different models: the atomiser
+    runs a small instruct model chosen for throughput, while the judge reference
+    stays the larger generalist. Caching one global singleton — as this did —
+    silently served whichever role loaded first, so configuring the atomiser's
+    model changed only what the status reported.
+    """
+    name = name or config.judge_model()
+    cached = _GENERATORS.get(name)
+    if cached is not None:
+        return cached
     with _LOCK:
-        if _JUDGE is None:
-            mount_semantic_venv()
-            try:
-                import torch  # type: ignore[import-not-found]  # noqa: F401
-                from transformers import (  # type: ignore[import-not-found]
-                    AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig,
-                )
-            except ImportError as exc:  # pragma: no cover
-                raise _import_failure(exc, f"cannot load the judge {config.judge_model()}") from exc
-            name = config.judge_model()
-            logger.info("slipbox: loading judge %s (NF4)", name)
-            quant = BitsAndBytesConfig(
-                load_in_4bit=True, bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype="float16",
+        if name in _GENERATORS:
+            return _GENERATORS[name]
+        mount_semantic_venv()
+        try:
+            import torch  # type: ignore[import-not-found]
+            from transformers import (  # type: ignore[import-not-found]
+                AutoModelForCausalLM, AutoTokenizer,
             )
-            tokenizer = AutoTokenizer.from_pretrained(name)
-            model = AutoModelForCausalLM.from_pretrained(
-                name, quantization_config=quant, device_map="auto",
-            )
-            _JUDGE = (model, tokenizer)
-    return _JUDGE
+        except ImportError as exc:  # pragma: no cover
+            raise _import_failure(exc, f"cannot load {name}") from exc
+
+        kwargs, how = _load_strategy(torch)
+        logger.info("slipbox: loading %s (%s)", name, how)
+        tokenizer = AutoTokenizer.from_pretrained(name)
+        model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
+        _GENERATORS[name] = (model, tokenizer)
+    return _GENERATORS[name]
+
+
+def _load_strategy(torch) -> tuple[dict, str]:
+    """How to load a generative model on *this* machine.
+
+    4-bit NF4 is a GPU technique. Without CUDA, bitsandbytes falls back to a
+    dequantise-per-op path that needs an optional kernels package and, lacking
+    it, is far slower than simply not quantising — while still paying 4-bit's
+    accuracy cost. So quantise only where it pays, and on CPU pick the widest
+    dtype the hardware executes natively: bfloat16 where AVX512-BF16 exists (it
+    halves the memory traffic that bounds CPU decoding), float32 otherwise.
+    """
+    if torch.cuda.is_available():
+        try:
+            from transformers import BitsAndBytesConfig  # type: ignore[import-not-found]
+
+            return {
+                "quantization_config": BitsAndBytesConfig(
+                    load_in_4bit=True, bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16,
+                ),
+                "device_map": "auto",
+            }, "NF4 on GPU"
+        except ImportError:  # pragma: no cover - bitsandbytes absent
+            return {"dtype": torch.float16, "device_map": "auto"}, "fp16 on GPU"
+
+    if _cpu_supports_bf16(torch):
+        return {"dtype": torch.bfloat16, "device_map": "cpu"}, "bf16 on CPU"
+    return {"dtype": torch.float32, "device_map": "cpu"}, "fp32 on CPU"
+
+
+def _cpu_supports_bf16(torch) -> bool:
+    probe = getattr(getattr(torch, "cpu", None), "_is_avx512_bf16_supported", None)
+    try:
+        return bool(probe()) if callable(probe) else False
+    except Exception:  # noqa: BLE001 - an unknown CPU is a float32 CPU
+        return False
+
+
+def judge():
+    """The judge reference model (`SLIPBOX_JUDGE_MODEL`)."""
+    return generator(config.judge_model())
 
 
 def judge_generate(messages: list[dict], max_new_tokens: int = 768,
-                   max_seconds: float | None = None) -> str:
+                   max_seconds: float | None = None,
+                   model_name: str | None = None) -> str:
     """Run the judge on a chat-style prompt and return its text.
 
     `messages` is the OpenAI-style `[{"role": ..., "content": ...}]` list.
@@ -282,11 +329,16 @@ def judge_generate(messages: list[dict], max_new_tokens: int = 768,
     stops generation mid-stream instead, which is why a caller can be promised
     that a distillation either finishes or fails within a configured time.
     """
-    model, tokenizer = judge()
+    model, tokenizer = generator(model_name)
     import torch  # type: ignore[import-not-found]
 
+    # `enable_thinking=False` matters for hybrid reasoning models (Qwen3 and
+    # kin), which otherwise emit a <think> block ahead of the answer and blow
+    # the token budget on reasoning nobody parses. Chat templates ignore
+    # variables they do not define, so this is inert for every other model.
     inputs = tokenizer.apply_chat_template(
-        messages, add_generation_prompt=True, return_tensors="pt"
+        messages, add_generation_prompt=True, return_tensors="pt",
+        enable_thinking=False,
     ).to(model.device)
 
     criteria = None
@@ -323,8 +375,8 @@ def import_hint() -> str:
 
 
 def judge_resident() -> bool:
-    """Whether the judge is already loaded. Free — touches nothing."""
-    return _JUDGE is not None
+    """Whether any generative model is already loaded. Free — touches nothing."""
+    return bool(_GENERATORS)
 
 
 def judge_importable() -> bool:
@@ -351,10 +403,9 @@ def judge_importable() -> bool:
 
 
 def unload_judge() -> None:
-    """Release the judge's VRAM (it is lazy-loaded and rarely resident)."""
-    global _JUDGE
+    """Release the generative models' memory (lazy-loaded, rarely resident)."""
     with _LOCK:
-        _JUDGE = None
+        _GENERATORS.clear()
     try:
         import torch  # type: ignore[import-not-found]
 

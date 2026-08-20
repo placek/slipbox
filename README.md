@@ -119,13 +119,26 @@ and `positional_scorer` (the reranker, or the token-overlap fallback) — so you
 confirm the reranker engaged. The positional layer only fires when `index.md` has
 a topic matching the query, so keep the topic map populated (`slipbox:consolidate`).
 
-## The three models (whitepaper §"Semantic layer")
+## The models (whitepaper §"Semantic layer")
 
 | Role | Reference | Where it runs |
 |------|-----------|---------------|
 | embedder | `BAAI/bge-m3` (1024-dim dense) | in-process, CPU |
 | reranker | `BAAI/bge-reranker-v2-m3` (cross-encoder) | in-process, CPU |
-| judge / atomiser | ~24B generalist (`atomizer.model`) | the **dedicated atomiser agent**, in-process by default |
+| atomiser | `Qwen/Qwen3-4B-Instruct-2507` (`atomizer.model`) | the **dedicated atomiser agent**, in-process |
+| judge | ~24B generalist (`SLIPBOX_JUDGE_MODEL`) | cited summaries, when a headless answer is needed |
+
+The atomiser and the judge are deliberately *separate roles*. The judge reference
+is a large generalist, which is right for a summary a human reads interactively
+and wrong for an unattended batch: with no CUDA the work lands on CPU, where
+decoding is bound by memory traffic, so a 24B spends tens of minutes per entry.
+The atomiser therefore defaults to a small **instruct** (non-reasoning) model
+picked for throughput and for reliably emitting one JSON object — a hybrid
+reasoning model would spend the budget on a `<think>` block nobody parses.
+Loading is device-aware: NF4 on CUDA, **bf16 on CPU where AVX512-BF16 exists**,
+float32 otherwise. 4-bit is a GPU technique; on CPU it needs an optional kernels
+package and, lacking it, is slower than not quantising while still costing
+accuracy.
 
 The GPU belongs to the conversational model; CARP runs on CPU, asynchronously.
 The semantic layer **degrades gracefully** — with no models installed the store

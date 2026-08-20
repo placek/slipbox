@@ -279,6 +279,10 @@ def _generate_local(instructions: str, prompt: str) -> str:
             # is unbounded: it runs on CPU at single-digit tokens per second, so
             # a token ceiling is not a time ceiling in any useful sense.
             max_seconds=config.atomizer_timeout(),
+            # The atomiser's OWN model, not the judge reference. These are
+            # different roles: this one is picked for throughput on a background
+            # batch, the judge for the cited summaries a human reads.
+            model_name=config.atomizer_model(),
         )
     except models.ModelUnavailable as exc:
         raise AtomizerError(
@@ -289,6 +293,10 @@ def _generate_local(instructions: str, prompt: str) -> str:
 
 
 _FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
+# Reasoning models emit their scratchpad before the answer. We ask for a
+# non-reasoning variant, but a deployment may point `atomizer.model` at a hybrid
+# one, and a <think> block would otherwise sit in front of the JSON.
+_THINK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 
 def parse_plan(text: str, require_source: bool = True) -> dict:
@@ -301,7 +309,7 @@ def parse_plan(text: str, require_source: bool = True) -> dict:
     raw = (text or "").strip()
     if not raw:
         raise AtomizerError("the atomiser returned nothing")
-    cleaned = _FENCE.sub("", raw).strip()
+    cleaned = _FENCE.sub("", _THINK.sub("", raw)).strip()
     try:
         return _validate(json.loads(cleaned), require_source)
     except json.JSONDecodeError:

@@ -380,9 +380,25 @@ def atomizer_backend() -> str:
     return value if value in ATOMIZER_BACKENDS else ATOMIZER_LOCAL
 
 
+ATOMIZER_DEFAULT_MODEL = "Qwen/Qwen3-4B-Instruct-2507"
+
+
 def atomizer_model() -> str:
-    """The model that distils. Defaults to the judge — atomisation *is* judging."""
-    return _setting("atomizer.model", "SLIPBOX_ATOMIZER_MODEL", default=judge_model())
+    """The model that distils — a role of its own, not the judge reference.
+
+    The whitepaper names a ~24B generalist as the judge, and that is right for
+    the cited summaries a human reads interactively. It is the wrong instrument
+    for this job: atomisation is an unattended batch on CPU (no CUDA here), where
+    decoding is bound by memory traffic, so a 24B spends tens of minutes per
+    entry and the token budget is exhausted before a plan is finished.
+
+    The default is therefore a small *instruct* model — chosen for throughput and
+    for reliably emitting the one JSON object the contract asks for. Deliberately
+    a non-reasoning variant: hybrid models spend the budget on a `<think>` block
+    nobody parses. Point `atomizer.model` at the judge to have one model do both.
+    """
+    return _setting("atomizer.model", "SLIPBOX_ATOMIZER_MODEL",
+                    default=ATOMIZER_DEFAULT_MODEL)
 
 
 def atomizer_provider() -> str:
