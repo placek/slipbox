@@ -362,6 +362,31 @@ def _run_adapt(args, root) -> None:
     _print_json(report)
 
 
+def _run_readapt(args, root) -> None:
+    """Re-extraction from cold storage, by the same dedicated agent as adapt.
+
+    Synchronous by default for the same reason `adapt` is: whoever ran this owns
+    the process, and handing the work to a daemon thread would let the
+    interpreter exit mid-distillation.
+    """
+    if not config.atomizer_enabled():
+        print("the dedicated atomiser is disabled (atomizer.enabled) — nothing to do.")
+        return
+    started = operations.stamp()
+    try:
+        if getattr(args, "background", False):
+            _print_json(atomizer.submit_readapt(args.source, root, args.guidance))
+            return
+        report = atomizer.distil_original(args.source, root, args.guidance)
+    except (atomizer.AtomizerError, operations.OperationError) as exc:
+        operations.record_job("readapt", started, "failed", str(exc), root)
+        print(f"readapt failed: {exc}")
+        return
+    operations.record_job("readapt", started, "ok",
+                          f"{report.get('atom_count', 0)} atoms", root)
+    _print_json(report)
+
+
 def _adapt_detail(report: dict) -> str:
     done = report.get("done") or []
     failed = report.get("failed") or []
@@ -422,6 +447,8 @@ def _cli_handler(args) -> None:
         print(cmd_accept(" ".join(filter(None, [args.ident, args.after])), root=root))
     elif command == "reject":
         print(cmd_reject(args.ident, root=root))
+    elif command == "readapt":
+        _run_readapt(args, root)
     elif command == "persist":
         _print_json(operations.persist(
             args.ident, after=args.after, new_thread=args.new_thread, topic=args.topic, root=root,
@@ -520,6 +547,15 @@ def setup_argparse(subparser) -> None:
     p_adapt.add_argument("--background", action="store_true",
                          help="Hand off and return at once instead of waiting "
                               "(never use from cron — the process would exit first)")
+
+    p_readapt = add("readapt", help="Re-read a source's archived original with the "
+                                    "atomiser agent and propose further atoms")
+    p_readapt.add_argument("source", help="Source note (wikilink, slug or path)")
+    p_readapt.add_argument("--guidance", default="",
+                           help="Steer the re-reading: 'split finer', "
+                                "'we missed the objections'")
+    p_readapt.add_argument("--background", action="store_true",
+                           help="Hand off and return at once instead of waiting")
 
     p_reindex = add("reindex", help="Sync embeddings.db with the notes")
     p_reindex.add_argument("--full", action="store_true", help="Rebuild from scratch")

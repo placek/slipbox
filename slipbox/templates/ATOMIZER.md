@@ -43,20 +43,38 @@ because it opens a contrasting thread. Never soften it, never drop it for being
 inconsistent: link it explicitly with `contradicts [[id]]` and say so in the
 placement rationale.
 
-## Placement
+## Placement — thread by default, open a thread only when you must
 
 You are given the store's topic map and the notes most related to this material.
-Place each atom:
+Every atom gets exactly one of three placements, and they are **not** equally
+likely. A source almost always yields a *train of thought*, not a pile of
+unrelated facts, so most atoms should continue something.
 
-- `link_after` — the existing store ID this atom continues or elaborates. A
-  follow-on step descends below its predecessor.
-- `continues` — instead of `link_after`, the 0-based index of an **earlier atom
-  in this same batch** that this one follows. Use it to build a thread out of one
-  source: atom 0 opens it, atom 1 sets `continues: 0`, atom 2 `continues: 1`.
-- `new_thread: true` with a `new_thread_topic` — an independent thought that
-  belongs to no existing thread. Say what topic it opens.
+Decide in this order, and take the first that applies:
 
-Give a one-sentence `rationale` for the placement of every atom.
+1. `link_after` — the existing store ID this atom continues, elaborates, refines
+   or contradicts. Prefer this whenever a listed related note is genuinely about
+   the same discussion.
+2. `continues` — the 0-based index of an **earlier atom in this same batch**
+   that this one follows. This is how one source becomes a thread: atom 0 opens
+   it, atom 1 sets `continues: 0`, atom 2 sets `continues: 1`, and so on.
+3. `new_thread: true` with a `new_thread_topic` — **the exception.** Only for a
+   thought that genuinely begins a new line of enquiry, belonging to no existing
+   note and to none of the atoms you have already written in this batch.
+
+Before you emit an atom with `new_thread: true`, check it against every atom
+already in your `atoms` list. If it shares a subject, a mechanism, a constraint
+or a consequence with one of them, it is a continuation of that atom — use
+`continues`, not a new thread. Two atoms describing different aspects of the
+same feature belong on one thread; so do a rule and its exception, a claim and
+its qualification, a mechanism and its safeguard.
+
+**Emitting a batch where every atom is `new_thread` is almost always wrong.** If
+your plan looks like that, you have produced a list rather than a train of
+thought — reconsider before answering, and chain the ones that belong together.
+
+Give a one-sentence `rationale` for the placement of every atom, naming what it
+continues and why.
 
 ## Scope
 
@@ -70,8 +88,25 @@ never decide to discard on scope alone.
 
 Also write the **literature note** for the source: a brief, selective summary in
 your own words of what this source argues. Not a copy, not an abstract of the
-abstract. Fill in the bibliographic fields you can determine from the material
-and leave the rest empty — never invent an author, a date, or a reference.
+abstract.
+
+For the bibliographic fields, apply one test to each: **can I point at the words
+in the material that say this?** If yes, fill it in. If no, the value is `""`.
+
+That test is not a preference — a fabricated field is worse than an absent one,
+because an empty field is visibly missing while an invented one is indistinguishable
+from a checked fact and will be cited as though it were verified. `author` and
+`date` are where this goes wrong most: a plausible-looking date you reconstructed
+from context, from the subject matter, or from the copyright era of the material
+is invented. Leave it empty. Only a date *stated in the material* counts — not
+today's date, not when you think it was written.
+
+## Scope, again
+
+Classify against the domain charter you were given, and nothing else. If the
+charter is empty or says nothing about this material, say so in
+`scope_rationale` and classify `in` — do not invent a domain to reason against,
+and do not appeal to fields the charter never mentions.
 
 ## Output
 
