@@ -650,3 +650,46 @@ def test_reasoning_scratchpad_is_stripped_before_parsing():
              + _plan_json([_atom("Kept")]))
     plan = atomizer.parse_plan(noisy)
     assert [a["title"] for a in plan["atoms"]] == ["Kept"]
+
+
+def test_unplaced_batches_are_threaded_in_code(repo):
+    from slipbox import atomizer
+
+    # The observed small-model failure: every atom comes back new_thread while
+    # the prose rationale says "continues...". Orphan top-level threads destroy
+    # the one property positional order exists for, so derive the structure.
+    plan = atomizer.parse_plan(_plan_json([_atom(f"A{i}") for i in range(4)]))
+    assert plan["atoms"][0]["new_thread"] is True          # the head opens it
+    assert [a["continues"] for a in plan["atoms"][1:]] == [0, 0, 0]   # a fan...
+    assert all(a["new_thread"] is False for a in plan["atoms"][1:])
+    # ...and the derivation is disclosed, so a reviewer knows the machine chose
+    # this shape rather than the judge.
+    assert atomizer.DERIVED_PLACEMENT in plan["atoms"][1]["rationale"]
+
+    # A shallow fan, not a deep chain: 1, 1-a, 1-b, 1-c.
+    ops.setup(repo)
+    ops.capture("Src", "body text", root=repo)
+    entry = ops.inbox(repo)["entries"][0]["path"]
+    import json as _json
+    original = atomizer._generate
+    atomizer._generate = lambda i, p: _plan_json([_atom(f"A{i}") for i in range(4)])
+    try:
+        result = atomizer.distil(entry, repo)
+    finally:
+        atomizer._generate = original
+    assert [a["proposed_id"] for a in result["atoms"]] == ["1", "1-a", "1-b", "1-c"]
+
+
+def test_a_model_that_placed_atoms_is_not_second_guessed():
+    from slipbox import atomizer
+
+    # Conservative on purpose: any expressed structure means hands off.
+    plan = atomizer.parse_plan(_plan_json([
+        _atom("head"), _atom("follows", continues=0), _atom("third"),
+    ]))
+    assert plan["atoms"][2]["continues"] is None       # left exactly as proposed
+    assert atomizer.DERIVED_PLACEMENT not in (plan["atoms"][2]["rationale"] or "")
+
+    # A single atom has nothing to thread onto.
+    solo = atomizer.parse_plan(_plan_json([_atom("only")]))
+    assert solo["atoms"][0]["continues"] is None

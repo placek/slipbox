@@ -382,7 +382,50 @@ def _validate(plan, require_source: bool = True) -> dict:
             "new_thread_topic": str(item.get("new_thread_topic", "") or "").strip(),
             "rationale": str(item.get("rationale", "") or "").strip(),
         })
-    return {"source": clean_source, "atoms": atoms}
+    return {"source": clean_source, "atoms": _thread_unplaced(atoms)}
+
+
+# Marks a placement the code chose rather than the judge, so a reviewer can see
+# the difference and re-pin. Provenance of a decision matters as much as the
+# decision: an inherited default must never read as a considered judgement.
+DERIVED_PLACEMENT = (
+    "[placement derived — the atomiser proposed no thread structure, so this "
+    "continues the batch's first atom; re-pin at review if it belongs elsewhere.]"
+)
+
+
+def _thread_unplaced(atoms: list[dict]) -> list[dict]:
+    """Impose a default thread when the model proposed no structure whatsoever.
+
+    Small models reliably return every atom as `new_thread` while *writing the
+    reasoning anyway* — rationales saying "directly continues the description
+    of…" attached to an atom that opens a new thread. The judgement is there; it
+    just never reaches the structured field, and no amount of extra instruction
+    binds the two. So derive it here instead.
+
+    Left alone, that failure fills the store with orphan top-level threads and
+    destroys the single property the positional order exists for: identifier
+    adjacency approximating semantic adjacency. A source's atoms end up as far
+    apart as if they had come from unrelated material.
+
+    The default is a shallow *fan* — the first atom opens the thread and the rest
+    become its siblings (`1`, `1-a`, `1-b`, …) — not a deep chain, because atoms
+    from one source elaborate a common head far more often than they form an
+    eight-step argument, and a wrong sibling is cheaper to re-pin than a wrong
+    depth. Deliberately conservative: if the model placed even one atom, it
+    expressed structure and none of it is second-guessed.
+    """
+    if len(atoms) < 2:
+        return atoms
+    if any(a["link_after"] or a["continues"] is not None for a in atoms):
+        return atoms  # the model had an opinion — respect it
+
+    atoms[0]["new_thread"] = True
+    for atom in atoms[1:]:
+        atom["continues"] = 0
+        atom["new_thread"] = False
+        atom["rationale"] = " ".join(filter(None, (atom["rationale"], DERIVED_PLACEMENT)))
+    return atoms
 
 
 def propose(context: dict, require_source: bool = True) -> dict:
