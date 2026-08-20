@@ -181,6 +181,22 @@ plugins:
 `slipbox doctor` reports whether the configured model is reachable — with a
 *cheap* probe that never pulls the weights.
 
+**Speed, and why background is not a nicety.** With `backend: local` the judge
+runs on **CPU**: the GPU belongs to the conversational model, so a 4-bit 24B is
+placed on CPU by `device_map="auto"` whenever VRAM is already spoken for.
+Measured here: ~80 s to load, then **~1.5 tok/s**. One entry is therefore
+minutes-to-tens-of-minutes, which is exactly the whitepaper's stated operating
+point ("asynchronous and low-priority, so a nightly batch tolerates single-digit
+tokens per second") — and exactly why every trigger hands off to a job instead
+of blocking.
+
+`atomizer.timeout` (default 900 s) is a **real wall-clock bound**, enforced with
+`MaxTimeCriteria` on the local path and covering the whole proposal including
+retries — a token ceiling is not a time ceiling at 1.5 tok/s. If distillation
+keeps timing out, the levers are: lower `max_tokens` / `max_chars`, raise
+`timeout`, pick a smaller local model, or set `backend: host` to borrow the
+model hermes already has loaded (fast, but the content leaves the machine).
+
 ## Automation
 
 Four scheduled jobs take `flock`-based locks shared with the manual skills:
@@ -257,14 +273,32 @@ ln -sfn "$PWD/slipbox" ~/.hermes/plugins/slipbox
 hermes plugins enable slipbox
 # (or from a git remote:  hermes plugins install <owner/repo> --enable)
 
-# The semantic layer is optional; install its deps into hermes' environment:
-pip install -r slipbox/requirements.txt
+# The semantic layer is optional. Its deps (torch, FlagEmbedding) are heavy and
+# usually cannot go into hermes' own read-only environment, so build a venv from
+# hermes' OWN interpreter and point the plugin at it:
+"$(dirname "$(readlink -f "$(command -v hermes)")")/python3" -m venv .venv-semantic
+.venv-semantic/bin/pip install -r slipbox/requirements.txt
+export SLIPBOX_SEMANTIC_VENV="$PWD/.venv-semantic"   # or set it in the profile .env
 ```
+
+The plugin **mounts that venv itself**, prepending it to `sys.path` (prepending
+matters: the host ships a newer `huggingface_hub` that would otherwise shadow the
+venv's and break `transformers`). Where a foreign-built torch also needs
+`libstdc++` that the dynamic linker cannot find — NixOS, typically — the plugin
+`dlopen`s it with `RTLD_GLOBAL` from `SLIPBOX_NATIVE_LIBS` (default: the nix-ld
+directory), which is the one way to fix that from *inside* a running process:
+`LD_LIBRARY_PATH` is read at exec, long before any Python runs.
+
+The upshot is that a bare `hermes` works from any directory, with no launcher
+wrapper and no `PYTHONPATH`/`LD_LIBRARY_PATH`. Rebuild the venv after a hermes
+upgrade — its interpreter path changes. `slipbox doctor` reports what resolved.
 
 `setup-hermes-profile.sh` does all of this against a throwaway profile.
 
 Key environment variables (all optional, sane defaults): `SLIPBOX_REPO`,
 `SLIPBOX_REPOS` (multi-repo; the first entry is the default), `SLIPBOX_READONLY`,
+`SLIPBOX_SEMANTIC_VENV`, `SLIPBOX_NATIVE_LIBS`, `SLIPBOX_ATOMIZER_*` (the
+dedicated atomiser: backend, model, instructions, bounds),
 `SLIPBOX_DEVICE`, `SLIPBOX_SEMANTIC`, `SLIPBOX_EMBED_MODEL`, `SLIPBOX_RERANK_MODEL`,
 `SLIPBOX_JUDGE_MODEL`, `SLIPBOX_WINDOW`, `SLIPBOX_PROBE_BUDGET`,
 `SLIPBOX_DUPLICATE_DISTANCE`, `SLIPBOX_PENDING_WARN`, `SLIPBOX_CRON_*`. See

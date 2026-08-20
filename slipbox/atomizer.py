@@ -275,6 +275,10 @@ def _generate_local(instructions: str, prompt: str) -> str:
             [{"role": "system", "content": instructions},
              {"role": "user", "content": prompt}],
             max_new_tokens=config.atomizer_max_tokens(),
+            # The same budget the host backend gets. Without it the local judge
+            # is unbounded: it runs on CPU at single-digit tokens per second, so
+            # a token ceiling is not a time ceiling in any useful sense.
+            max_seconds=config.atomizer_timeout(),
         )
     except models.ModelUnavailable as exc:
         raise AtomizerError(
@@ -380,6 +384,10 @@ def propose(context: dict, require_source: bool = True) -> dict:
         raise AtomizerError("the atomiser has no instructions configured")
     prompt = _render_prompt(context)
     attempts = max(1, config.atomizer_retries() + 1)
+    # The timeout bounds the whole proposal, not each attempt. A local judge that
+    # ran out of time returns truncated JSON, which fails to parse — and retrying
+    # that with a fresh full budget turns one slow distillation into several.
+    deadline = time.monotonic() + max(config.atomizer_timeout(), 0.0)
     last: Exception | None = None
     for attempt in range(attempts):
         try:
@@ -388,6 +396,12 @@ def propose(context: dict, require_source: bool = True) -> dict:
             last = exc
             logger.warning("slipbox: atomiser attempt %d/%d failed: %s",
                            attempt + 1, attempts, exc)
+            if time.monotonic() >= deadline:
+                raise AtomizerError(
+                    f"the atomiser ran out of time after {attempt + 1} attempt(s): "
+                    f"{exc}. Raise atomizer.timeout, lower atomizer.max_tokens, or "
+                    "move to a faster backend"
+                ) from exc
             # Re-ask with the failure named — a schema repair, not a blind retry.
             prompt = (
                 f"{_render_prompt(context)}\n\n"
@@ -660,9 +674,31 @@ def _forget_old() -> None:
                 _JOBS.pop(stale["id"], None)
 
 
+def require_reachable() -> None:
+    """Refuse to queue work the configured agent cannot possibly do.
+
+    Accepting a job and failing in a background thread is the worst of both: the
+    caller is told distillation started, and only a later status check reveals it
+    never could. The probe is the cheap one, so this costs nothing.
+    """
+    status = backend_status()
+    if status["reachable"]:
+        return
+    hint = ""
+    if status["backend"] == config.ATOMIZER_LOCAL:
+        from . import models
+
+        hint = models.import_hint()
+    raise AtomizerError(
+        f"the atomiser model is not reachable ({status['backend']}:"
+        f"{status['model']}) — {hint or status['detail']}"
+    )
+
+
 def submit_readapt(source_ident: str, root: Path, guidance: str = "",
                    repo: str | None = None) -> dict:
     """Queue a re-adaptation on a background thread — `readapt`'s dispatch."""
+    require_reachable()
     job_id = f"readapt-{uuid.uuid4().hex[:8]}"
     _record(job_id, status="queued", entries=[source_ident], repo=repo,
             queued=time.time(), done=[], failed=[], kind="readapt")
@@ -694,6 +730,7 @@ def submit(entries: list[str], root: Path, repo: str | None = None) -> dict:
     The caller gets a job id and nothing else — the atoms appear in `stage/` when
     the agent is done, and `slipbox_adapt_status` (or the digest) reports on it.
     """
+    require_reachable()
     job_id = f"adapt-{uuid.uuid4().hex[:8]}"
     _record(job_id, status="queued", entries=list(entries), repo=repo,
             queued=time.time(), done=[], failed=[])

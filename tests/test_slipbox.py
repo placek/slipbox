@@ -522,3 +522,83 @@ def test_atomizer_reads_model_and_instructions_from_plugin_config(monkeypatch):
     monkeypatch.setattr(cfg, "_PLUGIN_CONFIG", {})
     monkeypatch.delenv("SLIPBOX_ATOMIZER_MODEL", raising=False)
     assert "exactly one idea" in cfg.atomizer_instructions()
+
+
+def test_semantic_venv_is_mounted_ahead_of_the_host(tmp_path, monkeypatch):
+    import sys
+
+    from slipbox import config as cfg, models
+
+    site = tmp_path / "venv" / "lib" / "python3.12" / "site-packages"
+    site.mkdir(parents=True)
+    monkeypatch.setenv("SLIPBOX_SEMANTIC_VENV", str(tmp_path / "venv"))
+    monkeypatch.setattr(cfg, "_PLUGIN_CONFIG", {})
+    monkeypatch.setattr(models, "_VENV_MOUNTED", False)
+    # The C++ preload is a separate concern; keep this test to the path logic.
+    monkeypatch.setattr(models, "_ensure_cxx_runtime", lambda: None)
+
+    before = list(sys.path)
+    try:
+        mounted = models.mount_semantic_venv()
+        # PREPENDED, not appended: the host ships its own, newer huggingface_hub,
+        # and on an append that one shadows the venv's — leaving transformers
+        # refusing to import against a version it does not support.
+        assert mounted == str(site)
+        assert sys.path[0] == str(site)
+        # Idempotent — a second call must not stack duplicates.
+        monkeypatch.setattr(models, "_VENV_MOUNTED", False)
+        models.mount_semantic_venv()
+        assert sys.path.count(str(site)) == 1
+    finally:
+        sys.path[:] = before
+
+    # An unset or missing venv is simply "nothing to mount", never an error.
+    monkeypatch.delenv("SLIPBOX_SEMANTIC_VENV")
+    assert cfg.semantic_venv() is None
+    monkeypatch.setenv("SLIPBOX_SEMANTIC_VENV", str(tmp_path / "nope"))
+    assert cfg.semantic_venv() is None
+
+
+def test_atomizer_refuses_to_queue_what_it_cannot_run(repo, monkeypatch):
+    import json
+
+    from slipbox import atomizer, tools
+
+    ops.setup(repo)
+    ops.capture("Rivers", "Water flows downhill.", root=repo)
+
+    # Accepting a job and only failing in the background thread is the worst
+    # outcome: the caller is told distillation started, and nothing says
+    # otherwise until a later status check. Refuse at submit instead.
+    monkeypatch.setattr(atomizer, "backend_status", lambda: {
+        "enabled": True, "backend": "local", "model": "m",
+        "reachable": False, "resident": False, "detail": "no torch here",
+    })
+    result = json.loads(tools.slipbox_adapt({}))
+    assert "error" in result and "not reachable" in result["error"]
+    assert atomizer.jobs() == [] or all(j.get("status") != "queued"
+                                       for j in atomizer.jobs())
+
+
+def test_atomizer_timeout_bounds_the_whole_proposal(repo, monkeypatch):
+    import time
+
+    from slipbox import atomizer
+
+    # A local judge that runs out of time returns truncated JSON. Retrying that
+    # with a fresh full budget turns one slow distillation into several, so the
+    # timeout has to bound the proposal end to end, not each attempt.
+    monkeypatch.setenv("SLIPBOX_ATOMIZER_TIMEOUT", "0")
+    monkeypatch.setenv("SLIPBOX_ATOMIZER_RETRIES", "5")
+    calls = []
+    monkeypatch.setattr(atomizer, "_generate",
+                        lambda i, p: calls.append(1) or "not json at all")
+
+    started = time.monotonic()
+    with pytest.raises(atomizer.AtomizerError):
+        atomizer.propose({"title": "t", "content": "c", "truncated": False,
+                          "charter": "", "topic_map": "", "related": [],
+                          "attachments": [], "captured": "", "reference": "",
+                          "already": [], "guidance": ""})
+    assert len(calls) == 1                       # not 6: the budget stopped it
+    assert time.monotonic() - started < 5

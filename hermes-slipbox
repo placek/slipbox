@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Launch hermes with the slipbox semantic layer (bge-m3 + reranker) reachable.
 #
+# LARGELY OBSOLETE since the plugin mounts the venv itself and dlopens libstdc++
+# (see models.mount_semantic_venv): set SLIPBOX_SEMANTIC_VENV in the profile .env
+# and a bare `hermes` works from any directory. Kept as a belt-and-braces launcher
+# and for debugging, since setting both vars up front is still the surest path.
+#
 # The plugin loads IN-PROCESS inside hermes' own Python 3.12 interpreter
 # (hermes-agent-env), which has no torch / FlagEmbedding. This wrapper puts a
 # matching cp312 venv on PYTHONPATH and the nix-ld C++ runtime (libstdc++) on

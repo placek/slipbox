@@ -275,6 +275,39 @@ def judge_model() -> str:
     return _env("SLIPBOX_JUDGE_MODEL", default="mistralai/Mistral-Small-Instruct-2409")
 
 
+def semantic_venv() -> Path | None:
+    """A virtualenv holding the heavy model stack, mounted into this process.
+
+    The plugin loads *in-process* inside the host's interpreter, which normally
+    has no torch/FlagEmbedding. Pointing at a venv built from that same
+    interpreter lets the semantic layer work without a launcher wrapper setting
+    `PYTHONPATH` — see `models.mount_semantic_venv`.
+
+    Not a substitute for `LD_LIBRARY_PATH`: on NixOS, foreign torch still needs
+    libstdc++ from the dynamic linker, which only the environment can provide
+    because the linker reads it at exec time, before any Python runs.
+    """
+    raw = _setting("semantic.venv", "SLIPBOX_SEMANTIC_VENV").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_dir() else None
+
+
+def native_lib_dirs() -> list[Path]:
+    """Where to look for `libstdc++.so.6` when the dynamic linker cannot find it.
+
+    Colon-separated `SLIPBOX_NATIVE_LIBS`, else the nix-ld directory NixOS keeps
+    at a stable system path. Used only as a fallback, when torch has already
+    failed to import for exactly that reason.
+    """
+    raw = _setting("semantic.native_libs", "SLIPBOX_NATIVE_LIBS")
+    parts = [p.strip() for p in raw.split(":") if p.strip()] if raw else [
+        "/run/current-system/sw/share/nix-ld/lib",
+    ]
+    return [Path(p).expanduser() for p in parts]
+
+
 def use_fp16() -> bool:
     """Load the embedder/reranker in FP16 (needs CUDA); CPU falls back to FP32."""
     return _bool("SLIPBOX_FP16", True)
