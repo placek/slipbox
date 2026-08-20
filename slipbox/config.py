@@ -427,8 +427,17 @@ def atomizer_max_chars() -> int:
 
 
 def atomizer_max_tokens() -> int:
-    """Generation ceiling — the plan is JSON, and a truncated plan is unusable."""
-    return _setting_int("atomizer.max_tokens", "SLIPBOX_ATOMIZER_MAX_TOKENS", default=4096)
+    """Generation ceiling — the plan is JSON, and a truncated plan is unusable.
+
+    Kept *reachable within* `atomizer_timeout`, which is the whole point of the
+    number. The local judge runs on CPU at single-digit tokens per second (the
+    GPU belongs to the conversational model), so a ceiling the time budget can
+    never reach is not a safety limit — it just guarantees every distillation
+    ends as a truncated plan. At the measured ~1.5 tok/s these two defaults sit
+    either side of the same wall: 2048 tokens ≈ 1365 s, inside the 1800 s budget.
+    Raise them together, or not at all.
+    """
+    return _setting_int("atomizer.max_tokens", "SLIPBOX_ATOMIZER_MAX_TOKENS", default=2048)
 
 
 def atomizer_temperature() -> float:
@@ -437,8 +446,14 @@ def atomizer_temperature() -> float:
 
 
 def atomizer_timeout() -> float:
-    """Seconds one distillation may take before it is abandoned as failed."""
-    return _setting_float("atomizer.timeout", "SLIPBOX_ATOMIZER_TIMEOUT", default=900.0)
+    """Seconds one distillation may take before it is abandoned as failed.
+
+    A real wall-clock bound (`MaxTimeCriteria` on the local path), covering the
+    whole proposal including retries. Sized against `atomizer_max_tokens` at CPU
+    speed — see there. Generous because this is a background job nobody waits on;
+    the cost of being too tight is a plan cut off mid-JSON, which yields nothing.
+    """
+    return _setting_float("atomizer.timeout", "SLIPBOX_ATOMIZER_TIMEOUT", default=1800.0)
 
 
 def atomizer_candidates() -> int:

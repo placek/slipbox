@@ -163,9 +163,10 @@ shipped defaults:
 | `instructions` | `templates/ATOMIZER.md` | The composition contract. Inline text or a path. Overriding it deliberately changes what the store *means*. |
 | `max_atoms` | `12` | Ceiling per entry — better three sharp notes than ten restatements. |
 | `candidates` | `12` | Related store notes shown as placement candidates. |
-| `max_chars` / `max_tokens` | `24000` / `4096` | Input and generation bounds. |
+| `max_chars` / `max_tokens` | `24000` / `2048` | Input and generation bounds. `max_tokens` is kept *reachable within* `timeout` — see below. |
 | `temperature` | `0.1` | Near-greedy: faithfulness, not invention. |
-| `retries` | `2` | Re-asks when the returned JSON is unusable. |
+| `timeout` | `1800` | Hard wall-clock bound on one distillation, retries included. |
+| `retries` | `2` | Re-asks when the returned JSON is unusable (shares the one budget). |
 
 ```yaml
 # ~/.hermes/config.yaml
@@ -190,7 +191,7 @@ point ("asynchronous and low-priority, so a nightly batch tolerates single-digit
 tokens per second") — and exactly why every trigger hands off to a job instead
 of blocking.
 
-`atomizer.timeout` (default 900 s) is a **real wall-clock bound**, enforced with
+`atomizer.timeout` (default 1800 s) is a **real wall-clock bound**, enforced with
 `MaxTimeCriteria` on the local path and covering the whole proposal including
 retries — a token ceiling is not a time ceiling at 1.5 tok/s. If distillation
 keeps timing out, the levers are: lower `max_tokens` / `max_chars`, raise
