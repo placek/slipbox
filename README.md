@@ -70,7 +70,7 @@ jobs and ends in a git commit:
 
 | Stage | Tools |
 |-------|-------|
-| 0 Setup | `slipbox_setup` — create the layout, seed `index.md` / `SOUL.md`, init `embeddings.db`; idempotent, and fired automatically on the first session (`on_session_start`). |
+| 0 Setup | `slipbox_setup` — **`git init` the store**, create the layout, seed `index.md` / `SOUL.md`, init `embeddings.db`; idempotent, and fired automatically on the first session (`on_session_start`). A store nested inside a larger repository is left to commit into that one. |
 | 1 Capture | `slipbox_capture` |
 | 2 Adapt | `slipbox_adapt` · `slipbox_readapt` — hand distillation to the **dedicated atomiser agent** (returns a job id, never blocks). The mechanics it drives, also callable directly when the agent is off: `slipbox_source` · `slipbox_atom` · `slipbox_scope` · `slipbox_move_attachments` · `slipbox_archive_original` · `slipbox_drop_inbox` |
 | 3 Review | `slipbox_review` |

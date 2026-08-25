@@ -605,3 +605,15 @@ def cron_schedules() -> dict[str, str]:
 
 def autocommit() -> bool:
     return _bool("SLIPBOX_AUTOCOMMIT", True)
+
+
+def git_identity() -> tuple[str, str]:
+    """Author of last resort for the repository first-run setup creates.
+
+    Git refuses to commit without an identity, and the scheduled jobs run where
+    no global one may be configured — an unattended nightly distillation must not
+    lose its audit trail to `Please tell me who you are`. Written into the new
+    repository's own config only, and never over an identity that already exists.
+    """
+    return (_env("SLIPBOX_GIT_NAME", default="slipbox"),
+            _env("SLIPBOX_GIT_EMAIL", default="slipbox@localhost"))

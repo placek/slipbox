@@ -29,6 +29,59 @@ def is_repo(root: Path) -> bool:
     return _git(root, "rev-parse", "--is-inside-work-tree").returncode == 0
 
 
+def _has_identity(root: Path) -> bool:
+    """Whether git can resolve an author for a commit here."""
+    return bool(_git(root, "config", "user.email").stdout.strip()
+                and _git(root, "config", "user.name").stdout.strip())
+
+
+def init(root: Path) -> dict:
+    """Create the repository when the store is not under git yet.
+
+    Setup used to write `.gitignore` and then call `commit`, which answered
+    `not a git repository` and returned quietly — so on a fresh store every
+    capture, atom and placement was written to disk with **no audit trail**, and
+    nothing said so: `slipbox_log` simply reported an empty history. A store that
+    is not git-audited is not a slipbox, so first-run setup creates the repo
+    rather than assuming somebody else did.
+
+    A store deliberately kept *inside* a larger repository is left alone —
+    `is_repo` is already true there and its commits belong to the outer tree.
+
+    An automated commit also needs an author. Where the host has no global
+    identity configured, git refuses the commit with an error nobody reads, so a
+    repository-local fallback is set here — never overriding a real one.
+    """
+    if is_repo(root):
+        return {"initialized": False, "reason": "already a git repository"}
+    root.mkdir(parents=True, exist_ok=True)
+    result = _git(root, "init", "-q")
+    if result.returncode != 0:
+        logger.warning("slipbox: git init failed: %s", result.stderr.strip())
+        return {"initialized": False, "error": result.stderr.strip() or "git init failed"}
+    identity = False
+    if not _has_identity(root):
+        name, email = config.git_identity()
+        _git(root, "config", "user.name", name)
+        _git(root, "config", "user.email", email)
+        identity = True
+    return {"initialized": True, "local_identity": identity}
+
+
+def state(root: Path) -> dict:
+    """Whether this store can actually be audited — what `doctor` reports."""
+    repo = is_repo(root)
+    return {
+        "is_repo": repo,
+        "autocommit": config.autocommit(),
+        "has_identity": _has_identity(root) if repo else False,
+        "commits": (
+            int(_git(root, "rev-list", "--count", "HEAD").stdout.strip() or 0)
+            if repo else 0
+        ),
+    }
+
+
 def ensure_gitignore(root: Path) -> bool:
     """Guarantee the derived artefacts are ignored. True when the file changed."""
     path = root / ".gitignore"

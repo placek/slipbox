@@ -1170,6 +1170,12 @@ def setup(root: Path | None = None) -> dict:
     root = _root(root)
     created: list[str] = []
     with locks.hold(locks.REPO, locks.DB, root=root):
+        # Git first: everything below this line wants to end in a commit, and a
+        # store that is not a repository loses its audit trail silently.
+        git = gitops.init(root)
+        if git.get("initialized"):
+            created.append(".git/")
+
         for name in config.DIRECTORIES:
             directory = root / name
             if not directory.is_dir():
@@ -1202,5 +1208,6 @@ def setup(root: Path | None = None) -> dict:
         "root": str(root),
         "created": created,
         "already_initialized": not created,
+        "git": {**git, **gitops.state(root)},
         "commit": commit,
     }

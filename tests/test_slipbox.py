@@ -767,3 +767,48 @@ def test_persist_schema_does_not_invite_chaining():
         blob = str(schema)
         assert "most-connected" not in blob, schema["name"]
         assert "most connected" not in blob, schema["name"]
+
+
+# --- Regressions found by the end-to-end run ---------------------------------
+
+def test_setup_creates_the_git_repository(tmp_path, monkeypatch):
+    """A fresh store must end up under git, or it keeps no audit trail.
+
+    Setup wrote `.gitignore` and called `commit`, which answered `not a git
+    repository` and returned quietly, so every capture, atom and placement was
+    written with no history and nothing reported it. The `repo` fixture does its
+    own `git init`, which is exactly why no test caught this — so this one starts
+    from a bare directory.
+    """
+    from slipbox import gitops
+
+    root = tmp_path / "fresh"
+    monkeypatch.setenv("SLIPBOX_REPO", str(root))
+    result = ops.setup(root)
+
+    assert (root / ".git").is_dir()
+    assert gitops.is_repo(root)
+    assert result["git"]["is_repo"] is True
+    # An automated commit needs an author; setup provides one where the host has
+    # none, so the first commit cannot fail with "tell me who you are".
+    assert result["git"]["has_identity"] is True
+    assert result["commit"].get("committed") is True
+    assert result["git"]["commits"] >= 1
+
+    # Idempotent, and it never re-initialises an existing repository.
+    assert ops.setup(root)["git"]["initialized"] is False
+
+
+def test_setup_leaves_a_store_nested_in_another_repository_alone(tmp_path, monkeypatch):
+    """A slipbox kept inside a bigger repo commits to that one, as it always did."""
+    from slipbox import gitops
+
+    outer = tmp_path / "outer"
+    outer.mkdir()
+    subprocess.run(["git", "init", "-q", str(outer)], check=True)
+    inner = outer / "kb"
+    monkeypatch.setenv("SLIPBOX_REPO", str(inner))
+
+    ops.setup(inner)
+    assert not (inner / ".git").exists()
+    assert gitops.is_repo(inner)   # via the outer work tree

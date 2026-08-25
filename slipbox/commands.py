@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from . import atomizer, config, embeddings, lookup, models, operations
+from . import atomizer, config, embeddings, gitops, lookup, models, operations
 
 HELP = """\
 🧠 slipbox — a curated, agent-operated knowledge base
@@ -473,6 +473,11 @@ def doctor(root=None) -> dict:
         "embeddings_reachable": embeddings.available(),
         "reranker_available": models.reranker_available(),
         "atomizer": atomizer.backend_status(),
+        # Whether the store can be audited at all. A repository that is not under
+        # git accepts every write and keeps no history, and used to report
+        # nothing wrong anywhere — the failure only showed up as an empty
+        # `slipbox_log` long after the notes were written.
+        "git": gitops.state(root),
         "freshness": lookup.freshness(root),
     }
     try:
