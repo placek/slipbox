@@ -28,12 +28,7 @@ import sqlite3
 from pathlib import Path
 
 from . import config, embeddings, folgezettel, indexmd, models, notes
-
-_WORD_RE = re.compile(r"\w+", re.UNICODE)
-
-
-def _tokens(text: str) -> set[str]:
-    return {t.lower() for t in _WORD_RE.findall(text or "") if len(t) > 2}
+from .text import tokens as _tokens
 
 
 def _excerpt(note: notes.Note, width: int = 240) -> str:
@@ -197,6 +192,26 @@ def freshness(root: Path | None = None) -> dict:
     return report
 
 
+# --- Step 4: ranking the union -------------------------------------------------
+
+def _rank(candidate: dict) -> float:
+    """Effective distance a candidate is ordered by — lower is better.
+
+    The vector distance leads, because it is the only *calibrated* signal in the
+    union. A candidate the positional layer swept in but the embedder never
+    nominated carries no distance; it takes the neutral one
+    (`config.positional_distance`). Agreement between the layers subtracts a
+    small bonus rather than sorting ahead of everything, which is what "a soft
+    prior, never a filter" has to mean once the list is truncated to a limit.
+    """
+    distance = candidate.get("distance")
+    if distance is None:
+        distance = config.positional_distance()
+    if candidate.get("both_layers"):
+        distance -= config.both_layers_bonus()
+    return distance
+
+
 # --- The mechanism ------------------------------------------------------------
 
 def lookup(query: str, spaces=None, root: Path | None = None, *, vector=None,
@@ -266,7 +281,7 @@ def lookup(query: str, spaces=None, root: Path | None = None, *, vector=None,
             "both_layers": len(item["provenance"]) > 1,
         })
 
-    enriched.sort(key=lambda c: (not c["both_layers"], c.get("distance", 1.5), c["path"]))
+    enriched.sort(key=lambda c: (_rank(c), c["path"]))
     truncated = len(enriched) > limit
 
     return {

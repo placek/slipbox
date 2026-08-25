@@ -126,7 +126,13 @@ a topic matching the query, so keep the topic map populated (`slipbox:consolidat
 | embedder | `BAAI/bge-m3` (1024-dim dense) | in-process, CPU |
 | reranker | `BAAI/bge-reranker-v2-m3` (cross-encoder) | in-process, CPU |
 | atomiser | `Qwen/Qwen3-4B-Instruct-2507` (`atomizer.model`) | the **dedicated atomiser agent**, in-process |
-| judge | ~24B generalist (`SLIPBOX_JUDGE_MODEL`) | cited summaries, when a headless answer is needed |
+| judge | ~24B generalist (`SLIPBOX_JUDGE_MODEL`) | a *reference*: the default any generative role falls back to |
+
+Note what the judge is today: a configured **reference**, not a running role. No
+code path invokes it on its own — `slipbox_search` nominates and frames, and the
+cited summary is composed by the host agent. It becomes a loaded model only when
+a deployment points `atomizer.model` at it, so `doctor` reports its name without
+probing it.
 
 The atomiser and the judge are deliberately *separate roles*. The judge reference
 is a large generalist, which is right for a summary a human reads interactively
@@ -315,5 +321,11 @@ Key environment variables (all optional, sane defaults): `SLIPBOX_REPO`,
 dedicated atomiser: backend, model, instructions, bounds),
 `SLIPBOX_DEVICE`, `SLIPBOX_SEMANTIC`, `SLIPBOX_EMBED_MODEL`, `SLIPBOX_RERANK_MODEL`,
 `SLIPBOX_JUDGE_MODEL`, `SLIPBOX_WINDOW`, `SLIPBOX_PROBE_BUDGET`,
-`SLIPBOX_DUPLICATE_DISTANCE`, `SLIPBOX_PENDING_WARN`, `SLIPBOX_CRON_*`. See
-`config.py`.
+`SLIPBOX_DUPLICATE_DISTANCE`, `SLIPBOX_POSITIONAL_DISTANCE`,
+`SLIPBOX_BOTH_LAYERS_BONUS`, `SLIPBOX_PENDING_WARN`, `SLIPBOX_CRON_*`,
+`SLIPBOX_GIT_NAME` / `SLIPBOX_GIT_EMAIL` (the author of last resort for the
+repository first-run setup creates). See `config.py`.
+
+`SLIPBOX_DEVICE` steers both the embedder/reranker precision *and* where a
+generative model is placed — pin it to `cpu` to keep the GPU for the
+conversational model.

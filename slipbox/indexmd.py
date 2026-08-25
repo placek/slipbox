@@ -24,10 +24,12 @@ import re
 from pathlib import Path
 
 from . import config, notes
+# Imported as a name rather than a module: `text` is already a local variable in
+# this file (an index line's content), and the shadowing would be a trap.
+from .text import tokens as _tokens
 
 ITEM_RE = re.compile(r"^(?P<indent>[ \t]*)[-*+][ \t]+(?P<text>.*\S)[ \t]*$")
 HEADING = "# Index"
-_WORD_RE = re.compile(r"\w+", re.UNICODE)
 
 
 def path_of(root: Path) -> Path:
@@ -91,12 +93,14 @@ def tree(root: Path) -> list[dict]:
     return roots
 
 
-def _tokens(text: str) -> set[str]:
-    return {t.lower() for t in _WORD_RE.findall(text or "") if len(t) > 2}
-
-
 def match(root: Path, query: str, limit: int = 5) -> list[dict]:
-    """Topics whose wording overlaps the query, best first (lookup step 1)."""
+    """Topics whose wording overlaps the query, best first (lookup step 1).
+
+    Overlap is counted over *content* words only (`text.tokens`). Counting
+    function words made a single "and" shared with a topic title enough to
+    nominate every note under it, which is how an unrelated query used to sweep
+    the whole store into the positional layer.
+    """
     wanted = _tokens(query)
     if not wanted:
         return []

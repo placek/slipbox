@@ -812,3 +812,46 @@ def test_setup_leaves_a_store_nested_in_another_repository_alone(tmp_path, monke
     ops.setup(inner)
     assert not (inner / ".git").exists()
     assert gitops.is_repo(inner)   # via the outer work tree
+
+
+def test_a_function_word_does_not_match_every_topic(repo):
+    """Topic overlap counts content words only.
+
+    "and" shared with a topic title used to be enough to nominate every note
+    under it, so an unrelated query swept the whole store into the positional
+    layer — and those notes then outranked the real answer.
+    """
+    indexmd.add(repo, ["Storage engines", "Write-ahead logging and durability"], "1", "A")
+    indexmd.add(repo, ["Craft", "Paper marbling"], "2", "B")
+
+    assert indexmd.entry_ids(repo, "recipes for sourdough and pizza") == []
+    assert indexmd.entry_ids(repo, "carrageenan size and ox gall") == []
+    # A genuine content-word overlap still matches, and only the right topic.
+    assert indexmd.entry_ids(repo, "how is durability bounded?") == ["1"]
+    assert indexmd.entry_ids(repo, "marbling paper by hand") == ["2"]
+
+
+def test_both_layers_is_a_prior_not_a_filter():
+    """A near vector neighbour outranks weak candidates both layers happened to hit.
+
+    `both_layers` was the primary sort key, so thirteen loosely-related notes
+    that a spurious topic match had swept in pushed the single nearest neighbour
+    off the end of the truncated candidate list.
+    """
+    from slipbox import lookup
+
+    near = {"path": "source/marbling.md", "distance": 0.44, "both_layers": False}
+    corroborated = [{"path": f"store/{i}.md", "distance": 0.69, "both_layers": True}
+                    for i in range(13)]
+    ranked = sorted([*corroborated, near], key=lookup._rank)
+    assert ranked[0] is near
+
+    # It still breaks a tie between near-equals — that is what a prior is for.
+    a = {"path": "store/a.md", "distance": 0.50, "both_layers": False}
+    b = {"path": "store/b.md", "distance": 0.51, "both_layers": True}
+    assert sorted([a, b], key=lookup._rank)[0] is b
+
+    # A positional-only candidate has no distance and takes the neutral one:
+    # below what the embedder liked, above what it rejected.
+    positional_only = {"path": "store/p.md", "both_layers": False}
+    assert lookup._rank(near) < lookup._rank(positional_only) < lookup._rank(corroborated[0])

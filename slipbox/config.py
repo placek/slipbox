@@ -569,6 +569,32 @@ def candidate_limit() -> int:
     return _int("SLIPBOX_CANDIDATE_LIMIT", 20)
 
 
+def positional_distance() -> float:
+    """Where a positional-only candidate ranks on the embedder's distance scale.
+
+    The positional layer sweeps whole threads, so it nominates notes the embedder
+    never scored — they have no distance of their own. Ranking them best would
+    let a topic sweep bury the nearest neighbour; ranking them worst would waste
+    the layer that exists precisely to find notes sharing no vocabulary with the
+    query. Calibrated against bge-m3, where a genuine answer sits at ~0.2–0.45
+    and unrelated prose at ~0.65+: 0.55 places them just inside the plausible
+    band — below anything the embedder actually liked, above what it rejected.
+    """
+    return _float("SLIPBOX_POSITIONAL_DISTANCE", 0.55)
+
+
+def both_layers_bonus() -> float:
+    """How much agreement between the two layers improves a candidate's rank.
+
+    A *prior*, not a verdict (whitepaper: "vectors nominate, a reader decides").
+    Subtracted from the effective distance, so corroboration promotes a note past
+    near-equals without letting it leapfrog a much closer one. It used to be the
+    primary sort key, which — with the result truncated to `candidate_limit`
+    afterwards — made it a filter in all but name.
+    """
+    return _float("SLIPBOX_BOTH_LAYERS_BONUS", 0.05)
+
+
 def duplicate_distance() -> float:
     """Cosine distance below which a fresh atom is flagged a potential duplicate.
 
