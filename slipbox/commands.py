@@ -466,6 +466,11 @@ def doctor(root=None) -> dict:
     root = root if root is not None else config.repo_root(None)
     report = {
         "root": str(root),
+        # Which rule chose it. An unconfigured instance used to resolve its store
+        # to whatever sat beside the package — including, through the dev
+        # symlink, the plugin's own checkout — so "where are my notes going?"
+        # must be answerable without reading config.py.
+        "root_origin": config.root_origin(),
         "embed_model": config.embed_model(),
         "reranker_model": config.reranker_model(),
         "judge_model": config.judge_model(),

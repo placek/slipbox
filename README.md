@@ -338,3 +338,15 @@ repository first-run setup creates). See `config.py`.
 `SLIPBOX_DEVICE` steers both the embedder/reranker precision *and* where a
 generative model is placed — pin it to `cpu` to keep the GPU for the
 conversational model.
+
+**Where the store goes when nothing says.** `SLIPBOX_REPO` (or `SLIPBOX_REPOS`)
+decides it; failing that, the parent of the plugin package — the `<repo>/slipbox`
+deployment, where the plugin is installed *into* the knowledge base. The one
+exception is that the plugin's **own source checkout is never adopted as a
+store**: `Path(__file__).resolve()` follows symlinks, so under the dev install
+(`ln -sfn "$PWD/slipbox" …`) that parent is the git checkout, and an
+unconfigured instance would create `inbox/`, `store/` and `embeddings.db` there
+and commit notes into the project's history. It falls back to
+`$XDG_DATA_HOME/slipbox` (default `~/.local/share/slipbox`) instead.
+`slipbox doctor` reports the resolved `root` and the `root_origin` that chose it,
+so this is never something to infer.

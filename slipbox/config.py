@@ -178,16 +178,66 @@ def _bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _is_source_checkout(path: Path) -> bool:
+    """Whether `path` is the plugin's own development tree rather than a store.
+
+    The plugin's test suite and manifest travel together only in the source
+    repository: `hermes plugins install` copies the package alone, so a genuine
+    `<repo>/slipbox` deployment has no `tests/test_slipbox.py` beside it.
+    """
+    return ((path / "slipbox" / "plugin.yaml").is_file()
+            and (path / "tests" / "test_slipbox.py").is_file())
+
+
+def data_root() -> Path:
+    """The store of last resort, when nothing configured one.
+
+    An XDG data directory: somewhere a knowledge base can be created safely,
+    which is the property that matters for a default.
+    """
+    base = os.environ.get("XDG_DATA_HOME", "").strip()
+    return ((Path(base) if base else Path.home() / ".local" / "share")
+            / "slipbox").expanduser()
+
+
 def root() -> Path:
     """Root of the slipbox repository.
 
-    `$SLIPBOX_REPO` / `$SLIPBOX_ROOT`, otherwise the parent directory of the
-    plugin package (deployment: `<repo>/slipbox`).
+    `$SLIPBOX_REPO` / `$SLIPBOX_ROOT` decide it. Failing that, the parent of the
+    plugin package — the `<repo>/slipbox` deployment, where the package is
+    installed *into* the knowledge base — unless that parent is the plugin's own
+    source checkout, in which case the XDG data directory.
+
+    That exception is the point. `Path(__file__).resolve()` follows symlinks, and
+    the documented dev install is a symlink:
+
+        ln -sfn "$PWD/slipbox" ~/.hermes/plugins/slipbox
+
+    so the parent resolved back to the git checkout and an unconfigured instance
+    treated the plugin's own source tree as its knowledge base — creating
+    `inbox/`, `store/`, `embeddings.db` there and committing notes into the
+    project's history. Nothing said so, because writing to a valid-looking store
+    is indistinguishable from correct operation. A default may be wrong about
+    *where* someone wants their notes; it must never be somewhere that damages
+    what is already there.
     """
     value = _env("SLIPBOX_REPO", "SLIPBOX_ROOT")
     if value:
         return Path(value).expanduser().resolve()
-    return Path(__file__).resolve().parent.parent
+    parent = Path(__file__).resolve().parent.parent
+    if _is_source_checkout(parent):
+        return data_root().resolve()
+    return parent
+
+
+def root_origin() -> str:
+    """Which rule chose `root()` — reported by `doctor`, never guessed at."""
+    if _env("SLIPBOX_REPO", "SLIPBOX_ROOT"):
+        return "SLIPBOX_REPO"
+    if _is_source_checkout(Path(__file__).resolve().parent.parent):
+        return ("default (the plugin's source checkout is not a store — set "
+                "SLIPBOX_REPO to choose one)")
+    return "default (parent of the plugin package)"
 
 
 def db_path() -> Path:
