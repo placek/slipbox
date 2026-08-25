@@ -324,8 +324,9 @@ upgrade — its interpreter path changes. `slipbox doctor` reports what resolved
 
 `setup-hermes-profile.sh` does all of this against a throwaway profile.
 
-Key environment variables (all optional, sane defaults): `SLIPBOX_REPO`,
-`SLIPBOX_REPOS` (multi-repo; the first entry is the default), `SLIPBOX_READONLY`,
+Key environment variables. **`SLIPBOX_REPO` is required** — one of it or
+`SLIPBOX_REPOS` must name the store (see below); the rest are optional with sane
+defaults: `SLIPBOX_REPOS` (multi-repo; the first entry is the default), `SLIPBOX_READONLY`,
 `SLIPBOX_SEMANTIC_VENV`, `SLIPBOX_NATIVE_LIBS`, `SLIPBOX_ATOMIZER_*` (the
 dedicated atomiser: backend, model, instructions, bounds),
 `SLIPBOX_DEVICE`, `SLIPBOX_SEMANTIC`, `SLIPBOX_EMBED_MODEL`, `SLIPBOX_RERANK_MODEL`,
@@ -339,14 +340,19 @@ repository first-run setup creates). See `config.py`.
 generative model is placed — pin it to `cpu` to keep the GPU for the
 conversational model.
 
-**Where the store goes when nothing says.** `SLIPBOX_REPO` (or `SLIPBOX_REPOS`)
-decides it; failing that, the parent of the plugin package — the `<repo>/slipbox`
-deployment, where the plugin is installed *into* the knowledge base. The one
-exception is that the plugin's **own source checkout is never adopted as a
-store**: `Path(__file__).resolve()` follows symlinks, so under the dev install
-(`ln -sfn "$PWD/slipbox" …`) that parent is the git checkout, and an
-unconfigured instance would create `inbox/`, `store/` and `embeddings.db` there
-and commit notes into the project's history. It falls back to
-`$XDG_DATA_HOME/slipbox` (default `~/.local/share/slipbox`) instead.
-`slipbox doctor` reports the resolved `root` and the `root_origin` that chose it,
-so this is never something to infer.
+**Naming the store is required.** `SLIPBOX_REPO` (or `SLIPBOX_REPOS`) must point
+at it; there is **no default and no fallback**. Unconfigured, every tool returns
+an error saying so, the CLI exits 2, the hooks do nothing, and `slipbox doctor`
+reports it as a finding — it is the one command that still answers, since
+diagnosing an unconfigured deployment is what it is for.
+
+That is deliberate. The default used to be the parent of the plugin package, for
+the `<repo>/slipbox` layout where the plugin is installed *into* the knowledge
+base. But `Path(__file__).resolve()` follows symlinks, and the dev install is one
+(`ln -sfn "$PWD/slipbox" …`), so the parent resolved back to the plugin's own git
+checkout: an unconfigured instance created `inbox/`, `store/` and `embeddings.db`
+in the source tree and committed notes into the project's history, reporting
+success throughout. Every candidate for a default is a directory the plugin would
+then write a store into and commit to, and being wrong about that is destructive
+rather than merely inconvenient. `slipbox doctor` reports the resolved `root` and
+the `root_origin` that chose it, so this is never something to infer.

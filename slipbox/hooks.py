@@ -25,6 +25,11 @@ def on_session_start(**_) -> None:
     # Set up and freshness-check EVERY configured repo (config.repo_items() yields
     # the single default repo when SLIPBOX_REPOS is unset). A read-only deployment
     # never runs setup (it may not create or commit) — it only reports drift.
+    if not config.configured():
+        # Said once, at the one moment someone is watching the log, rather than
+        # as a failure inside every tool call later.
+        logger.warning("slipbox: %s", config.NOT_CONFIGURED_HINT)
+        return
     read_only = config.readonly()
     for name, root in config.repo_items():
         label = name or "repo"
@@ -51,8 +56,8 @@ def on_session_start(**_) -> None:
 
 
 def on_session_end(**_) -> None:
-    if config.readonly():
-        return  # a read-only agent makes no changes, so there is nothing to commit
+    if config.readonly() or not config.configured():
+        return  # nothing to commit: no changes were possible, or no store to commit to
     for name, root in config.repo_items():
         try:
             result = gitops.commit("slipbox: commit pending changes", root)

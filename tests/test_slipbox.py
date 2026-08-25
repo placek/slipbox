@@ -916,35 +916,57 @@ def test_any_load_failure_degrades_rather_than_crashing_a_write(repo, monkeypatc
     assert (repo / result["path"]).is_file()
 
 
-def test_the_plugin_source_tree_is_never_the_default_store(tmp_path, monkeypatch):
-    """An unconfigured instance must not adopt the plugin's own checkout.
 
-    `root()` falls back to the parent of the package — the `<repo>/slipbox`
-    deployment, where the plugin is installed *into* the knowledge base. But
-    `Path(__file__).resolve()` follows symlinks, and the documented dev install
-    is one (`ln -sfn "$PWD/slipbox" ~/.hermes/plugins/slipbox`), so the parent
-    resolved back to the git checkout: an unconfigured instance created `inbox/`,
-    `store/` and `embeddings.db` in the source tree and committed notes into the
-    project's history, reporting success throughout.
+def test_an_unconfigured_deployment_refuses_rather_than_guessing(tmp_path, monkeypatch):
+    """No store configured means no store — never a directory picked for you.
+
+    `root()` used to fall back to the parent of the plugin package. Because
+    `Path(__file__).resolve()` follows symlinks and the documented dev install is
+    one, that resolved back to the plugin's own git checkout: an unconfigured
+    instance created `inbox/`, `store/` and `embeddings.db` in the source tree and
+    committed notes into the project's history, reporting success throughout.
     """
+    import json
+
+    from slipbox import commands, hooks, tools
+
     monkeypatch.delenv("SLIPBOX_REPO", raising=False)
     monkeypatch.delenv("SLIPBOX_ROOT", raising=False)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.delenv("SLIPBOX_REPOS", raising=False)
 
-    project = Path(config.__file__).resolve().parent.parent
-    assert config._is_source_checkout(project)      # this very repository
-    assert config.root() != project
-    assert config.root() == (tmp_path / "data" / "slipbox").resolve()
-    assert "source checkout" in config.root_origin()
+    assert config.configured() is False
+    with pytest.raises(config.NotConfigured):
+        config.root()
+    # A ValueError, so the repo-resolution guards keep turning it into a tool
+    # error rather than letting it escape as a crash.
+    assert isinstance(config.NotConfigured(""), ValueError)
 
-    # A real `<repo>/slipbox` deployment — the package without the test suite —
-    # still takes the knowledge base beside it.
-    deployment = tmp_path / "kb"
-    (deployment / "slipbox").mkdir(parents=True)
-    (deployment / "slipbox" / "plugin.yaml").write_text("name: slipbox\n")
-    assert not config._is_source_checkout(deployment)
+    # Tools refuse, and say what to set.
+    for name in ("slipbox_capture", "slipbox_status", "slipbox_setup"):
+        result = json.loads(tools.HANDLERS[name]({}))
+        assert "SLIPBOX_REPO" in result["error"], name
+        assert not list(Path(config.__file__).resolve().parent.parent.glob("inbox"))
 
-    # And an explicit setting always wins over either rule.
-    monkeypatch.setenv("SLIPBOX_REPO", str(deployment))
-    assert config.root() == deployment.resolve()
+    # `doctor` reports it as a finding — diagnosing this is what it is for.
+    assert commands.doctor()["root_origin"] == "unconfigured"
+
+    # The hooks must not raise, and must not commit anything anywhere.
+    hooks.on_session_start()
+    hooks.on_session_end()
+
+    # Naming a store makes everything work again.
+    monkeypatch.setenv("SLIPBOX_REPO", str(tmp_path / "kb"))
+    assert config.configured() is True
+    assert config.root() == (tmp_path / "kb").resolve()
     assert config.root_origin() == "SLIPBOX_REPO"
+
+
+def test_multi_repo_alone_is_enough_configuration(tmp_path, monkeypatch):
+    """SLIPBOX_REPOS names stores too — requiring SLIPBOX_REPO as well would be silly."""
+    monkeypatch.delenv("SLIPBOX_REPO", raising=False)
+    monkeypatch.delenv("SLIPBOX_ROOT", raising=False)
+    monkeypatch.setenv("SLIPBOX_REPOS", f"work={tmp_path / 'w'},personal={tmp_path / 'p'}")
+
+    assert config.configured() is True
+    assert config.root_origin() == "SLIPBOX_REPOS"
+    assert config.repo_root(None) == (tmp_path / "w").resolve()

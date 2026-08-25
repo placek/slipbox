@@ -411,6 +411,17 @@ def _cli_handler(args) -> None:
         print(HELP)
         return
 
+    # Every other subcommand needs a store, and there is no default one. `doctor`
+    # is the exception: diagnosing a deployment that has not been configured yet
+    # is the job it exists to do, so it answers instead of refusing (and never
+    # reaches the per-repo loop below, which has no repo to iterate).
+    if not config.configured():
+        if command == "doctor":
+            print(json.dumps(doctor(), indent=2, default=str))
+            return
+        print(f"slipbox: {config.NOT_CONFIGURED_HINT}")
+        raise SystemExit(2)
+
     if config.readonly() and command not in _READONLY_CLI:
         print(f"slipbox is read-only (SLIPBOX_READONLY set); '{command}' is disabled.")
         return
@@ -462,7 +473,14 @@ def _cli_handler(args) -> None:
 
 
 def doctor(root=None) -> dict:
-    """Is the environment able to do semantic work at all? (per repo)."""
+    """Is the environment able to do semantic work at all? (per repo).
+
+    Diagnosing an unconfigured deployment is exactly what this is for, so a
+    missing store is a finding to report rather than an error to raise.
+    """
+    if root is None and not config.configured():
+        return {"root": None, "root_origin": "unconfigured",
+                "error": config.NOT_CONFIGURED_HINT}
     root = root if root is not None else config.repo_root(None)
     report = {
         "root": str(root),

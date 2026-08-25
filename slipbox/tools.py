@@ -195,6 +195,8 @@ def slipbox_setup(args: dict, **_) -> str:
     refused = _readonly_refusal("slipbox_setup")
     if refused is not None:
         return refused
+    if not config.configured():
+        return _err(config.NOT_CONFIGURED_HINT)
     results = []
     for name, root in config.repo_items():
         try:

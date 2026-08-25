@@ -119,3 +119,7 @@ def register(ctx) -> None:
         registered, len(commands.COMMANDS), skills,
         f", bundle /{config.bundle_name()}" if bundled else "",
     )
+    # Registered either way — the agent can then say what is wrong when asked,
+    # rather than the toolset simply being absent for no stated reason.
+    if not config.configured():
+        logger.warning("slipbox: %s", config.NOT_CONFIGURED_HINT)

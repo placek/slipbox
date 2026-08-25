@@ -178,66 +178,58 @@ def _bool(name: str, default: bool) -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
-def _is_source_checkout(path: Path) -> bool:
-    """Whether `path` is the plugin's own development tree rather than a store.
+class NotConfigured(ValueError):
+    """No knowledge base is configured. Raised rather than guessing at one.
 
-    The plugin's test suite and manifest travel together only in the source
-    repository: `hermes plugins install` copies the package alone, so a genuine
-    `<repo>/slipbox` deployment has no `tests/test_slipbox.py` beside it.
+    A ValueError so the existing `(KeyError, ValueError)` guards around repo
+    resolution keep turning it into an ordinary tool error instead of a crash.
     """
-    return ((path / "slipbox" / "plugin.yaml").is_file()
-            and (path / "tests" / "test_slipbox.py").is_file())
 
 
-def data_root() -> Path:
-    """The store of last resort, when nothing configured one.
+NOT_CONFIGURED_HINT = (
+    "no slipbox knowledge base is configured — set SLIPBOX_REPO to the store's "
+    "path (or SLIPBOX_REPOS=\"name=/path,…\" for several). There is deliberately "
+    "no default: the plugin will not guess which directory to write notes into."
+)
 
-    An XDG data directory: somewhere a knowledge base can be created safely,
-    which is the property that matters for a default.
-    """
-    base = os.environ.get("XDG_DATA_HOME", "").strip()
-    return ((Path(base) if base else Path.home() / ".local" / "share")
-            / "slipbox").expanduser()
+
+def configured() -> bool:
+    """Whether a store has been named. Cheap, and never raises."""
+    return bool(_env("SLIPBOX_REPO", "SLIPBOX_ROOT") or repos())
 
 
 def root() -> Path:
-    """Root of the slipbox repository.
+    """Root of the slipbox repository — `$SLIPBOX_REPO` / `$SLIPBOX_ROOT`.
 
-    `$SLIPBOX_REPO` / `$SLIPBOX_ROOT` decide it. Failing that, the parent of the
-    plugin package — the `<repo>/slipbox` deployment, where the package is
-    installed *into* the knowledge base — unless that parent is the plugin's own
-    source checkout, in which case the XDG data directory.
+    Required. There is no fallback, because every candidate for one was a
+    directory the plugin would then create a store in and commit to, and being
+    wrong about that is destructive rather than merely inconvenient.
 
-    That exception is the point. `Path(__file__).resolve()` follows symlinks, and
-    the documented dev install is a symlink:
+    The previous default — the parent of the plugin package, for the
+    `<repo>/slipbox` deployment — resolved through the documented dev symlink
 
         ln -sfn "$PWD/slipbox" ~/.hermes/plugins/slipbox
 
-    so the parent resolved back to the git checkout and an unconfigured instance
-    treated the plugin's own source tree as its knowledge base — creating
-    `inbox/`, `store/`, `embeddings.db` there and committing notes into the
-    project's history. Nothing said so, because writing to a valid-looking store
-    is indistinguishable from correct operation. A default may be wrong about
-    *where* someone wants their notes; it must never be somewhere that damages
-    what is already there.
+    back to the plugin's own git checkout, so an unconfigured instance wrote
+    `inbox/`, `store/` and `embeddings.db` into the source tree and committed
+    notes to the project's history, reporting success throughout. Writing to a
+    valid-looking store is indistinguishable from correct operation, so the error
+    surfaces only much later. Naming the store costs one line of configuration;
+    guessing it wrong costs somebody else's repository.
     """
     value = _env("SLIPBOX_REPO", "SLIPBOX_ROOT")
-    if value:
-        return Path(value).expanduser().resolve()
-    parent = Path(__file__).resolve().parent.parent
-    if _is_source_checkout(parent):
-        return data_root().resolve()
-    return parent
+    if not value:
+        raise NotConfigured(NOT_CONFIGURED_HINT)
+    return Path(value).expanduser().resolve()
 
 
 def root_origin() -> str:
-    """Which rule chose `root()` — reported by `doctor`, never guessed at."""
+    """Which setting chose the store — reported by `doctor`, never guessed at."""
+    if repos():
+        return "SLIPBOX_REPOS"
     if _env("SLIPBOX_REPO", "SLIPBOX_ROOT"):
         return "SLIPBOX_REPO"
-    if _is_source_checkout(Path(__file__).resolve().parent.parent):
-        return ("default (the plugin's source checkout is not a store — set "
-                "SLIPBOX_REPO to choose one)")
-    return "default (parent of the plugin package)"
+    return "unconfigured"
 
 
 def db_path() -> Path:
