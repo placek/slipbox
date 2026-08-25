@@ -616,15 +616,20 @@ def test_local_backend_uses_the_atomiser_model_not_the_judge(monkeypatch):
 
     seen = {}
 
-    def fake_generate(messages, max_new_tokens=768, max_seconds=None, model_name=None):
+    def fake_generate(messages, max_new_tokens=768, max_seconds=None, model_name=None,
+                      temperature=None):
         seen["model"] = model_name
         seen["max_seconds"] = max_seconds
+        seen["temperature"] = temperature
         return "{}"
 
     monkeypatch.setattr(models, "judge_generate", fake_generate)
     atomizer._generate_local("instructions", "prompt")
     assert seen["model"] == "atomiser/model"
     assert seen["max_seconds"] == cfg.atomizer_timeout()   # the budget is passed too
+    # ...and so is the temperature: it used to reach only the `host` backend, so
+    # the documented knob was inert on the default path.
+    assert seen["temperature"] == cfg.atomizer_temperature()
 
 
 def test_generative_models_are_cached_per_name(monkeypatch):
@@ -882,3 +887,30 @@ def test_readonly_refuses_a_write_handler(repo, monkeypatch):
 
     # Reads are untouched.
     assert json.loads(tools.HANDLERS["slipbox_status"]({})).get("readonly") is None
+
+
+def test_any_load_failure_degrades_rather_than_crashing_a_write(repo, monkeypatch):
+    """Degradation must not depend on the failure being exactly ImportError.
+
+    `embed` catches `ModelUnavailable` and `_embed_vector` catches the
+    `EmbeddingError` it becomes. Anything else — a broken weights cache, a driver
+    error, a version clash raising ValueError inside transformers — escaped both
+    and aborted the capture instead of deferring the vector.
+    """
+    from slipbox import embeddings, models
+
+    def explode():
+        raise ValueError("pytest.__spec__ is None")
+
+    monkeypatch.setattr(models, "_EMBEDDER", None)
+    monkeypatch.setattr(models, "mount_semantic_venv", explode)
+
+    with pytest.raises(models.ModelUnavailable):
+        models.embedder()
+    with pytest.raises(embeddings.EmbeddingError):
+        embeddings.embed_doc("text")
+
+    # And the write still lands, with the vector deferred rather than lost.
+    result = ops.create_atom("A claim", "A body.", candidates=["new-thread"], root=repo)
+    assert result["embedding"].startswith("deferred")
+    assert (repo / result["path"]).is_file()

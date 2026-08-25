@@ -135,6 +135,22 @@ def _import_failure(exc: Exception, what: str) -> ModelUnavailable:
     )
 
 
+def _load_failure(exc: Exception, what: str) -> ModelUnavailable:
+    """Translate *any* load failure into the one error callers degrade on.
+
+    Graceful degradation used to rest on the failure being exactly `ImportError`:
+    `embeddings.embed` catches `ModelUnavailable` and `operations._embed_vector`
+    catches the `EmbeddingError` it becomes, so a missing dependency defers the
+    vector and the write still succeeds. Anything else — a broken weights cache,
+    a driver error, a version clash raising `ValueError` from deep inside
+    `transformers` — escaped both and aborted `slipbox_capture` outright. A model
+    that cannot load is unavailable however it fails to load.
+    """
+    if isinstance(exc, ImportError):
+        return _import_failure(exc, what)
+    return ModelUnavailable(f"{what}: {type(exc).__name__}: {exc}")
+
+
 _LOCK = threading.Lock()
 _EMBEDDER = None
 _RERANKER = None
@@ -162,14 +178,15 @@ def embedder():
         return _EMBEDDER
     with _LOCK:
         if _EMBEDDER is None:
-            mount_semantic_venv()
             try:
+                mount_semantic_venv()
                 from FlagEmbedding import BGEM3FlagModel  # type: ignore[import-not-found]
-            except ImportError as exc:  # pragma: no cover - exercised only with the dep
-                raise _import_failure(exc, f"cannot load {config.embed_model()}") from exc
-            fp16 = config.use_fp16() and _resolve_device() != "cpu"
-            logger.info("slipbox: loading embedder %s (fp16=%s)", config.embed_model(), fp16)
-            _EMBEDDER = BGEM3FlagModel(config.embed_model(), use_fp16=fp16)
+
+                fp16 = config.use_fp16() and _resolve_device() != "cpu"
+                logger.info("slipbox: loading embedder %s (fp16=%s)", config.embed_model(), fp16)
+                _EMBEDDER = BGEM3FlagModel(config.embed_model(), use_fp16=fp16)
+            except Exception as exc:  # noqa: BLE001 - see _load_failure
+                raise _load_failure(exc, f"cannot load {config.embed_model()}") from exc
     return _EMBEDDER
 
 
@@ -190,14 +207,16 @@ def reranker():
         return _RERANKER
     with _LOCK:
         if _RERANKER is None:
-            mount_semantic_venv()
             try:
+                mount_semantic_venv()
                 from FlagEmbedding import FlagReranker  # type: ignore[import-not-found]
-            except ImportError as exc:  # pragma: no cover
-                raise _import_failure(exc, f"cannot load {config.reranker_model()}") from exc
-            fp16 = config.use_fp16() and _resolve_device() != "cpu"
-            logger.info("slipbox: loading reranker %s (fp16=%s)", config.reranker_model(), fp16)
-            _RERANKER = FlagReranker(config.reranker_model(), use_fp16=fp16)
+
+                fp16 = config.use_fp16() and _resolve_device() != "cpu"
+                logger.info("slipbox: loading reranker %s (fp16=%s)",
+                            config.reranker_model(), fp16)
+                _RERANKER = FlagReranker(config.reranker_model(), use_fp16=fp16)
+            except Exception as exc:  # noqa: BLE001 - see _load_failure
+                raise _load_failure(exc, f"cannot load {config.reranker_model()}") from exc
     return _RERANKER
 
 
@@ -256,19 +275,19 @@ def generator(name: str | None = None):
     with _LOCK:
         if name in _GENERATORS:
             return _GENERATORS[name]
-        mount_semantic_venv()
         try:
+            mount_semantic_venv()
             import torch  # type: ignore[import-not-found]
             from transformers import (  # type: ignore[import-not-found]
                 AutoModelForCausalLM, AutoTokenizer,
             )
-        except ImportError as exc:  # pragma: no cover
-            raise _import_failure(exc, f"cannot load {name}") from exc
 
-        kwargs, how = _load_strategy(torch)
-        logger.info("slipbox: loading %s (%s)", name, how)
-        tokenizer = AutoTokenizer.from_pretrained(name)
-        model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
+            kwargs, how = _load_strategy(torch)
+            logger.info("slipbox: loading %s (%s)", name, how)
+            tokenizer = AutoTokenizer.from_pretrained(name)
+            model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - see _load_failure
+            raise _load_failure(exc, f"cannot load {name}") from exc
         _GENERATORS[name] = (model, tokenizer)
     return _GENERATORS[name]
 
@@ -283,7 +302,12 @@ def _load_strategy(torch) -> tuple[dict, str]:
     dtype the hardware executes natively: bfloat16 where AVX512-BF16 exists (it
     halves the memory traffic that bounds CPU decoding), float32 otherwise.
     """
-    if torch.cuda.is_available():
+    # `SLIPBOX_DEVICE` steers this too. It used to be consulted only by
+    # `_resolve_device` (the embedder/reranker fp16 choice), so a deployment that
+    # had pinned the semantic layer to the CPU — because the GPU belongs to the
+    # conversational model — still had `device_map="auto"` place a generative
+    # model on that same busy GPU and offload whatever did not fit.
+    if _resolve_device().startswith("cuda") and torch.cuda.is_available():
         try:
             from transformers import BitsAndBytesConfig  # type: ignore[import-not-found]
 
@@ -317,7 +341,8 @@ def judge():
 
 def judge_generate(messages: list[dict], max_new_tokens: int = 768,
                    max_seconds: float | None = None,
-                   model_name: str | None = None) -> str:
+                   model_name: str | None = None,
+                   temperature: float | None = None) -> str:
     """Run the judge on a chat-style prompt and return its text.
 
     `messages` is the OpenAI-style `[{"role": ..., "content": ...}]` list.
@@ -328,6 +353,11 @@ def judge_generate(messages: list[dict], max_new_tokens: int = 768,
     4096 tokens at 1.5 tok/s is three quarters of an hour. `MaxTimeCriteria`
     stops generation mid-stream instead, which is why a caller can be promised
     that a distillation either finishes or fails within a configured time.
+
+    `temperature` above zero samples; zero or `None` decodes greedily. This used
+    to be hardcoded greedy, so `atomizer.temperature` — documented as the knob
+    that keeps distillation near-greedy — reached only the `host` backend and
+    transformers warned that it was being ignored on every local run.
     """
     model, tokenizer = generator(model_name)
     import torch  # type: ignore[import-not-found]
@@ -336,10 +366,21 @@ def judge_generate(messages: list[dict], max_new_tokens: int = 768,
     # kin), which otherwise emit a <think> block ahead of the answer and blow
     # the token budget on reasoning nobody parses. Chat templates ignore
     # variables they do not define, so this is inert for every other model.
-    inputs = tokenizer.apply_chat_template(
+    #
+    # `return_dict=True` to get the attention mask with the ids: without it
+    # `generate` warns it cannot infer one because pad and eos are the same
+    # token, and has to guess where the prompt ends.
+    encoded = tokenizer.apply_chat_template(
         messages, add_generation_prompt=True, return_tensors="pt",
-        enable_thinking=False,
-    ).to(model.device)
+        enable_thinking=False, return_dict=True,
+    )
+    # `keys`, not `to`: a bare tensor has `.to` as well, so testing for that
+    # would take the mapping branch on the very versions the fallback is for.
+    if hasattr(encoded, "keys"):
+        encoded = encoded.to(model.device)
+        inputs, attention_mask = encoded["input_ids"], encoded.get("attention_mask")
+    else:  # pragma: no cover - older transformers return a bare tensor
+        inputs, attention_mask = encoded.to(model.device), None
 
     criteria = None
     if max_seconds and max_seconds > 0:
@@ -352,10 +393,14 @@ def judge_generate(messages: list[dict], max_new_tokens: int = 768,
         except ImportError:  # pragma: no cover - older transformers
             logger.debug("slipbox: MaxTimeCriteria unavailable; generation is unbounded")
 
+    sampling = ({"do_sample": True, "temperature": float(temperature)}
+                if temperature and temperature > 0 else {"do_sample": False})
+
     with torch.no_grad():
         generated = model.generate(
-            inputs, max_new_tokens=max_new_tokens, do_sample=False,
+            inputs, attention_mask=attention_mask, max_new_tokens=max_new_tokens,
             pad_token_id=tokenizer.eos_token_id, stopping_criteria=criteria,
+            **sampling,
         )
     text = tokenizer.decode(generated[0][inputs.shape[-1]:], skip_special_tokens=True)
     return text.strip()

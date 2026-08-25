@@ -118,6 +118,14 @@ Each lookup reports which models actually ran — `semantic_scorer` (the embedde
 and `positional_scorer` (the reranker, or the token-overlap fallback) — so you can
 confirm the reranker engaged. The positional layer only fires when `index.md` has
 a topic matching the query, so keep the topic map populated (`slipbox:consolidate`).
+Topic matching counts **content words only** (`text.py`): a query sharing nothing
+but "and" with a topic title used to nominate every note beneath it.
+
+The union is ordered by vector distance, the one calibrated signal available.
+A candidate the positional layer swept in but the embedder never scored takes a
+neutral distance (`SLIPBOX_POSITIONAL_DISTANCE`), and agreement between the two
+layers subtracts a small bonus (`SLIPBOX_BOTH_LAYERS_BONUS`) — a prior that
+promotes a note past near-equals, never one that outranks a much closer match.
 
 ## The models (whitepaper §"Semantic layer")
 
@@ -256,6 +264,7 @@ slipbox/
 ├── folgezettel.py     identifier parsing, ordering, allocation
 ├── notes.py           frontmatter, wikilinks, the self-describing id scheme
 ├── indexmd.py         the nested topic map (index.md)
+├── text.py            query tokenisation shared by the structural/lexical layers
 ├── embeddings.py      sqlite-vec store, three vector tables, freshness
 ├── models.py          in-process embedder / reranker / judge (lazy singletons)
 ├── atomizer.py        the dedicated distillation agent + its background jobs

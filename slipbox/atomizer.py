@@ -283,6 +283,8 @@ def _generate_local(instructions: str, prompt: str) -> str:
             # different roles: this one is picked for throughput on a background
             # batch, the judge for the cited summaries a human reads.
             model_name=config.atomizer_model(),
+            # The same knob the host backend already honoured.
+            temperature=config.atomizer_temperature(),
         )
     except models.ModelUnavailable as exc:
         raise AtomizerError(
