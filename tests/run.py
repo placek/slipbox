@@ -26,10 +26,19 @@ def _install_pytest_shim() -> None:
         return
     except ImportError:
         pass
+    import importlib.machinery
     import types
     from contextlib import contextmanager
 
     shim = types.ModuleType("pytest")
+    # A module built by hand has `__spec__ = None`, and `importlib.util.find_spec`
+    # raises `ValueError: pytest.__spec__ is None` rather than reporting absence
+    # for such a module. `transformers` probes optional packages that way at
+    # import time, so an unspecced shim made `import transformers` fail — and the
+    # suite could therefore never run against the real semantic layer at all: on
+    # an interpreter that *has* torch, 18 of the 43 tests failed inside the
+    # embedder. Giving the shim a spec keeps it invisible to those probes.
+    shim.__spec__ = importlib.machinery.ModuleSpec("pytest", loader=None)
 
     def fixture(*args, **kwargs):
         # Support both @fixture and @fixture().
