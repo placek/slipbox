@@ -855,3 +855,30 @@ def test_both_layers_is_a_prior_not_a_filter():
     # below what the embedder liked, above what it rejected.
     positional_only = {"path": "store/p.md", "both_layers": False}
     assert lookup._rank(near) < lookup._rank(positional_only) < lookup._rank(corroborated[0])
+
+
+def test_readonly_refuses_a_write_handler(repo, monkeypatch):
+    """The mode belongs on the operation, not only on the registered menu.
+
+    Read-only was enforced at registration and in the CLI, but the handlers
+    themselves still ran, so anything holding a reference to one wrote and
+    committed to a store the operator had marked read-only.
+    """
+    import json
+
+    from slipbox import schemas, tools
+
+    monkeypatch.setenv("SLIPBOX_READONLY", "1")
+    result = json.loads(tools.HANDLERS["slipbox_capture"](
+        {"title": "x", "content": "y"}))
+    assert result.get("readonly") is True
+    assert "read-only" in result["error"]
+    assert not list((repo / config.INBOX).glob("*.md"))
+
+    # Every write tool, including the branch of setup that loops over repos.
+    for schema in schemas.WRITING:
+        refusal = json.loads(tools.HANDLERS[schema["name"]]({}))
+        assert refusal.get("readonly") is True, schema["name"]
+
+    # Reads are untouched.
+    assert json.loads(tools.HANDLERS["slipbox_status"]({})).get("readonly") is None

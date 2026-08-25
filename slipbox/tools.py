@@ -7,7 +7,11 @@ from __future__ import annotations
 
 import json
 
-from . import atomizer, config, embeddings, lookup, operations
+from . import atomizer, config, embeddings, lookup, operations, schemas
+
+# The CARP write surface, named once so the read-only guard cannot drift from
+# what `__init__._active_schemas` withholds — both read the same table.
+_WRITE_TOOLS = frozenset(s["name"] for s in schemas.WRITING)
 
 
 def _ok(payload) -> str:
@@ -18,6 +22,24 @@ def _err(message: str, **extra) -> str:
     return json.dumps({"error": message, **extra}, ensure_ascii=False, default=str)
 
 
+def _readonly_refusal(name: str) -> str | None:
+    """Refuse a write on a read-only deployment. None when the call may proceed.
+
+    `SLIPBOX_READONLY` was enforced in two of the three places a write can start:
+    the tools were withheld at registration and the CLI subcommands refused, but
+    the handlers themselves still ran — so anything holding a reference to one
+    (another plugin, a scheduled job, a test) wrote and committed to a store the
+    operator had marked read-only. The mode is a property of the deployment, so
+    it belongs on the operation, not only on the menu.
+    """
+    if name in _WRITE_TOOLS and config.readonly():
+        return _err(
+            f"slipbox is read-only (SLIPBOX_READONLY set); {name} is disabled",
+            readonly=True,
+        )
+    return None
+
+
 def _run(args: dict, name: str, call):
     """Resolve the target repo, run `call(root)` under the guard, echo the repo.
 
@@ -26,6 +48,9 @@ def _run(args: dict, name: str, call):
     operation against that root, and tags the result with the active repo name so
     cited results stay unambiguous across knowledge bases. Never raises.
     """
+    refused = _readonly_refusal(name)
+    if refused is not None:
+        return refused
     try:
         root = config.repo_root(args.get("repo"))
     except (KeyError, ValueError) as exc:
@@ -165,6 +190,11 @@ def slipbox_setup(args: dict, **_) -> str:
     """Set up one repo (`repo` given) or every configured repo (looped over repos())."""
     if (args.get("repo") or "").strip():
         return _run(args, "slipbox_setup", lambda root: operations.setup(root))
+    # The all-repos branch does not funnel through `_run`, so it needs the guard
+    # explicitly — setup creates directories and commits.
+    refused = _readonly_refusal("slipbox_setup")
+    if refused is not None:
+        return refused
     results = []
     for name, root in config.repo_items():
         try:
