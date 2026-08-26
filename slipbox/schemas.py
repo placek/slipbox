@@ -47,7 +47,8 @@ SLIPBOX_LOOKUP = {
             "query": {"type": "string", "description": "Question or topic, in natural language."},
             "spaces": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["store", "source", "stage"]},
+                "items": {"type": "string",
+                          "enum": ["store", "source", "stage", "synthesis"]},
                 "description": "Vector spaces to query (default: store).",
             },
             "limit": {"type": "integer", "description": "Maximum number of candidates."},
@@ -127,6 +128,56 @@ SLIPBOX_BACKLINKS = {
         "type": "object",
         "properties": {"ident": {"type": "string", "description": "ID, path or source slug."}},
         "required": ["ident"],
+    },
+}
+
+SLIPBOX_SYNTHESES = {
+    "name": "slipbox_syntheses",
+    "description": (
+        "List synthesis/ — dated views over the store, newest first, each with the "
+        "atoms it cites and the drift it has accumulated since it was written. A "
+        "synthesis is a navigational object, never evidence."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
+SLIPBOX_DRIFT = {
+    "name": "slipbox_drift",
+    "description": (
+        "How far each synthesis has fallen behind: the atoms placed in its cited "
+        "threads since it was written. High drift marks a re-synthesis candidate. "
+        "A date comparison and a prefix match — no models, cheap enough to schedule."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
+SLIPBOX_SYNTHESISE = {
+    "name": "slipbox_synthesise",
+    "description": (
+        "Write a synthesis: a dated document answering a question from atoms it "
+        "CITES. Needs no review, because it is never the proof of anything — the "
+        "proof is the cited atoms, and every claim must resolve to one. Use it for "
+        "an answer worth keeping, an overview binding a cluster, or a comparison "
+        "across threads. Never invent a citation; cite only placed store IDs. When "
+        "it answers past an earlier synthesis, pass `supersedes` — the earlier one "
+        "is kept, not replaced, so the two can be compared later."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "What this synthesis says, as a claim."},
+            "question": {"type": "string",
+                         "description": "The question it answers, verbatim if there was one."},
+            "body": {"type": "string",
+                     "description": "The document. Name any tension between atoms "
+                                    "joined by `contradicts` rather than smoothing it."},
+            "cites": {"type": "array", "items": {"type": "string"},
+                      "description": "Store IDs this rests on. Required — a synthesis "
+                                     "citing nothing proves nothing."},
+            "supersedes": {"type": "string",
+                           "description": "Path of the earlier synthesis this answers past."},
+        },
+        "required": ["title", "body", "cites"],
     },
 }
 
@@ -706,6 +757,7 @@ READ_ONLY = (
     SLIPBOX_SHOW, SLIPBOX_LOOKUP, SLIPBOX_INBOX, SLIPBOX_STAGE, SLIPBOX_SOURCES,
     SLIPBOX_STORE, SLIPBOX_TREE, SLIPBOX_BACKLINKS, SLIPBOX_INDEX, SLIPBOX_ORIGINAL,
     SLIPBOX_STATUS, SLIPBOX_LOG, SLIPBOX_SCHEDULE, SLIPBOX_ADAPT_STATUS, SLIPBOX_LINT,
+    SLIPBOX_SYNTHESES, SLIPBOX_DRIFT,
 )
 
 GATED = (SLIPBOX_SEARCH, SLIPBOX_QUOTE)
@@ -715,7 +767,7 @@ WRITING = (
     SLIPBOX_SETUP, SLIPBOX_CAPTURE, SLIPBOX_SOURCE, SLIPBOX_ATOM, SLIPBOX_SCOPE,
     SLIPBOX_MOVE_ATTACHMENTS, SLIPBOX_ARCHIVE_ORIGINAL, SLIPBOX_DROP_INBOX,
     SLIPBOX_REVIEW, SLIPBOX_PERSIST, SLIPBOX_INDEX_ADD, SLIPBOX_INDEX_WRITE,
-    SLIPBOX_PURGE_REJECTED, SLIPBOX_REINDEX,
+    SLIPBOX_PURGE_REJECTED, SLIPBOX_REINDEX, SLIPBOX_SYNTHESISE,
 )
 
 # Every tool takes an optional `repo` selector: when several knowledge bases are

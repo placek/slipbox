@@ -58,6 +58,7 @@ tools fall in three groups (`__init__._active_schemas`):
 | `slipbox_index` | `index.md` parsed into a nested topic map with entry-note IDs. |
 | `slipbox_original` | A source's archived original from cold storage — deliberate, quarantined, never embedded (powers `readapt`). |
 | `slipbox_status` · `slipbox_log` · `slipbox_schedule` | Backlog counters + drift signal; a note's git history; cron/job/lock state. |
+| `slipbox_syntheses` · `slipbox_drift` | Dated views over the store, newest first; and how far each has fallen behind the atoms it cites. |
 | `slipbox_lint` | The silent faults: dangling wikilinks, store notes no topic points at, notes absent from the connection graph, uncited atoms, broken threads. No models needed. |
 | `slipbox_adapt_status` | Progress of the background distillation jobs, and whether the atomiser's model is reachable. |
 
@@ -78,6 +79,7 @@ jobs and ends in a git commit:
 | 3 Review | `slipbox_review` |
 | 4 Persist | `slipbox_persist` |
 | Topic map | `slipbox_index_add` · `slipbox_index_write` |
+| Synthesis | `slipbox_synthesise` — write a dated view citing atoms. The one write that needs **no review**: a synthesis is never evidence, so it costs nothing the store guarantees. |
 | Housekeeping | `slipbox_purge_rejected` · `slipbox_reindex` |
 
 The mechanical slash commands (`/slipbox-adapt`, `/slipbox-adapt-status`,
@@ -94,6 +96,7 @@ slipbox-repo/
 ├── stage/        # distilled atoms awaiting review           (+ .attachments/)
 ├── store/        # atomic notes — immutable once placed      (+ .attachments/)
 ├── source/       # bibliography notes …                      (+ .attachments/  ← the originals, cold)
+├── synthesis/    # dated views over the store: answers, overviews, comparisons
 ├── index.md      # nested topic map → entry notes
 ├── SOUL.md       # process & philosophy + domain charter
 └── embeddings.db # sqlite-vec index (derived; outside git)
@@ -137,6 +140,30 @@ promotes a note past near-equals, never one that outranks a much closer match.
 | reranker | `BAAI/bge-reranker-v2-m3` (cross-encoder) | in-process, CPU |
 | atomiser | `Qwen/Qwen3-4B-Instruct-2507` (`atomizer.model`) | the **dedicated atomiser agent**, in-process |
 | judge | ~24B generalist (`SLIPBOX_JUDGE_MODEL`) | a *reference*: the default any generative role falls back to |
+
+### Syntheses — a materialised view, never the store
+
+`synthesis/` holds dated documents that **cite** atoms: the answer to a question,
+an overview binding a cluster, a comparison across threads. No position (a UUID,
+like a source note), its own vector table, and frontmatter `title` · `question` ·
+`created` · `cites` · `supersedes`.
+
+One rule carries the whole design: **a synthesis is never the proof of a claim —
+the proof is always the atoms it cites.** It is a navigational object. That is why
+it may be written automatically, without review, and still enter retrieval: the
+judge treats it as a lead, and everything taken from it must resolve to an atom
+anyway.
+
+It buys three things. *Retrieval*: a fifth channel consulted **before** the four,
+not beside them — a hit means the road was already walked, so the judge checks the
+`drift` (atoms placed in the cited threads since) instead of composing from
+scratch; empty drift and the earlier answer stands. *Structure*: threads are
+Folgezettel, topics are `index.md`, and cross-thread cuts are syntheses — three
+layers with three geometries, which is why `index.md` stays pure bookmarks.
+*Analysis*: because re-synthesis writes a **new** dated note that `supersedes` the
+old rather than overwriting it, two answers to the same question a year apart can
+be diffed — the store can show how its own view changed, which no system that
+rewrites its pages can do.
 
 Note what the judge is today: a configured **reference**, not a running role. No
 code path invokes it on its own — `slipbox_search` nominates and frames, and the

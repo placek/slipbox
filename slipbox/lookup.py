@@ -192,6 +192,82 @@ def freshness(root: Path | None = None) -> dict:
     return report
 
 
+# --- Step 0: the synthesis lead ------------------------------------------------
+
+def synthesis_lead(query: str, root: Path | None = None, *, vector=None,
+                   max_distance: float | None = None) -> dict | None:
+    """A question already answered — consulted *before* the four layers, not beside them.
+
+    The other channels answer "which notes are about this". This one answers
+    something different and cheaper: "has this road been walked before". A hit
+    means the hops were made, the threads gathered and the citations already
+    placed, so the judge does not compose from nothing — it checks the *delta*.
+
+    The delta is what makes this safe rather than a cache of stale answers: how
+    many atoms have been placed in the cited threads since the synthesis was
+    written. Empty delta and the earlier answer still stands. Non-empty and the
+    judge reads only those atoms and writes a new synthesis superseding this one,
+    which is a fraction of the work of answering from scratch.
+
+    Never authoritative. A synthesis is a lead: everything the judge takes from
+    it must still resolve to the atoms it cites, which is exactly why it may be
+    machine-written and unreviewed without weakening a single guarantee the store
+    makes. Returns None when nothing is close enough to be worth reading.
+    """
+    root = root or config.repo_root(None)
+    query = (query or "").strip()
+    if vector is None and query:
+        try:
+            vector = embeddings.embed_query(query)
+        except embeddings.EmbeddingError:
+            return None
+    if vector is None:
+        return None
+
+    hits, notice = vector_search(root, vector, (config.SPACE_SYNTHESIS,), k=1,
+                                 max_distance=(config.synthesis_lead_distance()
+                                               if max_distance is None else max_distance))
+    if notice or not hits:
+        return None
+    best = min(hits, key=lambda h: h["distance"])
+    note = notes.load(root, best["path"])
+    if note is None:
+        return None
+
+    drift = next((d for d in operations_drift(root) if d["path"] == note.rel), {})
+    return {
+        "path": note.rel,
+        "title": note.title,
+        "question": note.get("question") or "",
+        "created": note.get("created"),
+        "cites": note.cites,
+        "distance": best["distance"],
+        "drift": drift.get("drift", 0),
+        "new_atoms": drift.get("new_atoms", []),
+        "superseded_by": drift.get("superseded_by"),
+        "verdict": (
+            "superseded — read the newer synthesis instead"
+            if drift.get("superseded_by") else
+            "current — no atom has been placed in the cited threads since"
+            if not drift.get("drift") else
+            f"stale by {drift.get('drift')} atom(s) — read those, then re-synthesise"
+        ),
+        "instruction": (
+            "This is a LEAD, never evidence. Its claims are proved by the atoms it "
+            "cites, so verify through them before repeating anything. If `new_atoms` "
+            "is non-empty, read only those and write a new synthesis that supersedes "
+            "this one."
+        ),
+    }
+
+
+def operations_drift(root: Path):
+    """`operations.synthesis_drift` without the import cycle it would otherwise cost."""
+    from . import operations
+
+    return operations.synthesis_drift(root)["syntheses"]
+
+
 # --- Step 4: ranking the union -------------------------------------------------
 
 def _rank(candidate: dict) -> float:

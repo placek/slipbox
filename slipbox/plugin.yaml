@@ -23,6 +23,8 @@ provides_tools:
   - slipbox_original
   - slipbox_status
   - slipbox_lint
+  - slipbox_syntheses
+  - slipbox_drift
   - slipbox_log
   - slipbox_schedule
   - slipbox_adapt_status
@@ -46,6 +48,7 @@ provides_tools:
   - slipbox_index_write
   - slipbox_purge_rejected
   - slipbox_reindex
+  - slipbox_synthesise
 provides_skills:
   # CARP write path + read path
   - capture

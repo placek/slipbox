@@ -215,7 +215,23 @@ class Note:
             return config.SPACE_STORE
         if self.rel.startswith(config.SOURCE + "/"):
             return config.SPACE_SOURCE
+        if self.rel.startswith(config.SYNTHESIS + "/"):
+            return config.SPACE_SYNTHESIS
         return None
+
+    @property
+    def cites(self) -> list[str]:
+        """Note IDs a synthesis rests on — its `cites` frontmatter, as bare IDs.
+
+        The citation list is the load-bearing part of a synthesis: it is what
+        makes the document checkable (every claim resolves to an atom), what
+        `drift` measures against, and what `coverage` counts. Kept in frontmatter
+        rather than scraped from the prose so it is a *declared* dependency, not
+        an inferred one — a synthesis that cites nothing is a synthesis that
+        proves nothing, and that should be visible without parsing English.
+        """
+        return [str(c).strip().strip("[]").split("/")[-1]
+                for c in as_list(self.frontmatter.get("cites")) if str(c).strip()]
 
     @property
     def key(self) -> str:
@@ -223,7 +239,19 @@ class Note:
         return self.id if self.space == config.SPACE_STORE and self.id else self.stem
 
     def embed_text(self) -> str:
-        """What gets embedded: the title plus the body, without frontmatter."""
+        """What gets embedded: the title plus the body, without frontmatter.
+
+        A synthesis leads with the *question* it answers. Its channel exists to
+        recognise "this road has been walked before", so a query is matched
+        against a question, not against prose — and the prose is long, so leaving
+        the question out diluted the very signal the channel is for. Measured on
+        a real store: the same question-to-synthesis pair sat at cosine 0.43
+        embedded as title+body, comfortably past the lead threshold, and the
+        channel never fired once.
+        """
+        question = str(self.get("question", "") or "").strip()
+        if self.space == config.SPACE_SYNTHESIS and question:
+            return f"{question}\n\n{self.title}\n\n{self.body.strip()}".strip()
         return f"{self.title}\n\n{self.body.strip()}".strip()
 
     def hash(self) -> str:
@@ -272,6 +300,12 @@ def stage_notes(root: Path) -> list[Note]:
     return [Note(p, root) for p in _markdown_files(root / config.STAGE)]
 
 
+def synthesis_notes(root: Path) -> list[Note]:
+    """Newest first — a synthesis is read as "the latest view", not as a sequence."""
+    notes = [Note(p, root) for p in _markdown_files(root / config.SYNTHESIS)]
+    return sorted(notes, key=lambda n: str(n.get("created") or ""), reverse=True)
+
+
 def store_notes(root: Path) -> list[Note]:
     """Store notes in Folgezettel order."""
     found = [Note(p, root) for p in _markdown_files(root / config.STORE)]
@@ -290,6 +324,7 @@ def notes_in_space(root: Path, space: str) -> list[Note]:
         config.SPACE_STORE: store_notes,
         config.SPACE_SOURCE: source_notes,
         config.SPACE_STAGE: stage_notes,
+        config.SPACE_SYNTHESIS: synthesis_notes,
     }[space](root)
 
 

@@ -139,6 +139,25 @@ def slipbox_original(args: dict, **_) -> str:
     return _run(args, "slipbox_original", lambda root: operations.original(args.get("ident", ""), root))
 
 
+def slipbox_syntheses(args: dict, **_) -> str:
+    return _run(args, "slipbox_syntheses", lambda root: operations.syntheses(root))
+
+
+def slipbox_drift(args: dict, **_) -> str:
+    return _run(args, "slipbox_drift", lambda root: operations.synthesis_drift(root))
+
+
+def slipbox_synthesise(args: dict, **_) -> str:
+    return _run(args, "slipbox_synthesise", lambda root: operations.create_synthesis(
+        title=args.get("title", ""),
+        body=args.get("body", ""),
+        question=args.get("question", "") or "",
+        cites=_as_list(args.get("cites")),
+        supersedes=(args.get("supersedes") or "").strip() or None,
+        root=root,
+    ))
+
+
 def slipbox_lint(args: dict, **_) -> str:
     return _run(args, "slipbox_lint", lambda root: operations.lint(root))
 
@@ -174,8 +193,16 @@ def slipbox_search(args: dict, **_) -> str:
             limit=_int_or(args.get("limit")),
             root=root,
         )
+        # Step 0: has this road been walked before? A hit is a lead, never an
+        # answer — the judge still resolves every claim through the cited atoms.
+        lead = lookup.synthesis_lead(args.get("query", ""), root)
+        if lead:
+            result["synthesis_lead"] = lead
         result["instruction"] = (
-            "Read the candidates (slipbox_show / slipbox_quote), then answer so "
+            ("A synthesis already answers something close to this — see "
+             "`synthesis_lead`. Verify through the atoms it cites; if `new_atoms` "
+             "is non-empty, read those and supersede it. " if lead else "")
+            + "Read the candidates (slipbox_show / slipbox_quote), then answer so "
             "that EVERY claim cites the note IDs it derives from. Mark staged "
             "candidates as not yet situated. On an explicit contradiction, let the "
             "newer position win and cite the older as the earlier one."
@@ -408,6 +435,9 @@ HANDLERS = {
     "slipbox_index": slipbox_index,
     "slipbox_original": slipbox_original,
     "slipbox_lint": slipbox_lint,
+    "slipbox_syntheses": slipbox_syntheses,
+    "slipbox_drift": slipbox_drift,
+    "slipbox_synthesise": slipbox_synthesise,
     "slipbox_status": slipbox_status,
     "slipbox_log": slipbox_log,
     "slipbox_schedule": slipbox_schedule,

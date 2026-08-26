@@ -14,14 +14,14 @@
   #v(0.3em)
   #text(size: 13pt)[A Curated, Agent-Operated Knowledge Base \ for Unstructured Data]
   #v(0.5em)
-  #text(size: 10pt, fill: rgb("#555555"))[Technical Whitepaper — Rev. 1.3 — August 2026]
+  #text(size: 10pt, fill: rgb("#555555"))[Technical Whitepaper — Rev. 1.4 — August 2026]
 ]
 
 #v(1.2em)
 
 #block(inset: (x: 1.5cm))[
   #text(size: 9.5pt, style: "italic")[
-    *Abstract.* Slipbox is a knowledge-base architecture that inverts the dominant retrieval paradigm: instead of ingesting raw documents cheaply and spending intelligence at query time, it invests intelligence at write time — distilling every captured document into atomic, human-reviewed notes placed in a linearly ordered store — so that retrieval becomes layered, auditable, and nearly trivial. The system is operated by an LLM agent, lives entirely in a local git repository of plain-text files, uses a single-file embedded vector index, and retains original documents in cold storage (`source/.attachments/`) that enables future re-extraction with better models. It is best understood as an alternative to the *LLM-maintained wiki* — the pattern of an agent owning a directory of generated markdown and rewriting it as sources arrive — differing from it on the single axis from which everything else follows: Slipbox's notes are immutable and human-gated, so knowledge accrues by *addition under review* rather than by *rewriting under automation*. This paper defines the scope of the system, explains its full processing lifecycle, analyses its retrieval properties, compares it with contemporary tooling and in detail with the LLM-maintained wiki, and specifies implementation details.
+    *Abstract.* Slipbox is a knowledge-base architecture that inverts the dominant retrieval paradigm: instead of ingesting raw documents cheaply and spending intelligence at query time, it invests intelligence at write time — distilling every captured document into atomic, human-reviewed notes placed in a linearly ordered store — so that retrieval becomes layered, auditable, and nearly trivial. The system is operated by an LLM agent, lives entirely in a local git repository of plain-text files, uses a single-file embedded vector index, and retains original documents in cold storage (`source/.attachments/`) that enables future re-extraction with better models. It is best understood as an alternative to the *LLM-maintained wiki* — the pattern of an agent owning a directory of generated markdown and rewriting it as sources arrive — differing from it on the single axis from which everything else follows: Slipbox's notes are immutable and human-gated, so knowledge accrues by *addition under review* rather than by *rewriting under automation*. This paper defines the scope of the system, explains its full processing lifecycle, analyses its retrieval properties, compares it with contemporary tooling and in detail with the LLM-maintained wiki, and specifies implementation details — including `synthesis/`, a materialised view of dated documents that cite atoms and are collected rather than rewritten.
   ]
 ]
 
@@ -63,6 +63,7 @@ slipbox-repo/
 │   └── .attachments/
 ├── source/           # bibliography notes: metadata of each source
 │   └── .attachments/ # the originals — cold storage beside their bibliography
+├── synthesis/        # dated views over the store: answers, overviews, cuts
 ├── index.md          # nested topic map → entry notes
 ├── SOUL.md           # process & philosophy, read by agent instances
 └── embeddings.db     # sqlite-vec index (derived; outside git)
@@ -261,6 +262,8 @@ What Slipbox buys with that price is what rewriting forecloses. An immutable not
 
 Neither answers the drift the wiki's author leaves open — an assumption that quietly stops being true, contradicted by no incoming source, is invisible to both. Slipbox narrows it slightly by dating every note and letting the newer position win on explicit conflict, but a claim nothing contradicts is not flagged in either system.
 
+The sharpest way to put the difference is one line: *the wiki maintains one synthesis by rewriting it; Slipbox maintains atoms and collects syntheses, dating them.* For the wiki a synthesis is a *state*; here it is a *record*. Slipbox does write syntheses — `synthesis/` holds them (see @synthesis) — but it writes a new one each time and keeps the old, which is why it can show how its own view of a question changed over a year and the wiki, having overwritten the earlier one, cannot.
+
 The choice between them is therefore not about quality but about what the knowledge is *for*. Where knowledge should read as a current, coherent account of a domain and the cost of a wrong sentence is low, the wiki is the better instrument. Where a claim must still be defensible years later — traceable to a source, to a date, to a reviewer, and to an unmodified original — Slipbox is, and it accepts fragmentation and human effort to get there.
 
 = Implementation Details
@@ -288,6 +291,22 @@ So distillation is a *dedicated agent*: its own model, its own instructions, its
 The deployment configures two things, and only two: which model distils, and what it is told to do. Both come from the host's plugin configuration, because they are deployment decisions rather than repository ones — and the second is not a prompt tweak but a redefinition of what the store means, since the instructions *are* the composition contract. The default backend keeps the model in-process, so no captured content leaves the machine; the alternative delegates to the host's own model lane, whose provider routing and credentials the plugin never sees, and whose model can only be steered when the operator has granted that trust explicitly.
 
 The agent's authority is deliberately narrow: it *proposes*. It returns a structured plan — a literature note and a list of atoms with their placements, scopes and title variants — which is validated and bounded before any of it reaches the repository, and then executed by the same deterministic operations every other path uses. Nothing about the store is entrusted to the model: a hallucinated placement target costs that one atom and the rest of the batch proceeds, a plan that will not parse is re-asked with its own error quoted back, and the ceiling on atoms per source makes the relevance test mechanical. Re-adaptation is the same agent pointed at cold storage instead of the inbox, shown the atoms already distilled from that source and told not to repeat them — which is also where the originals layer's quarantine finally pays off in full: the untrusted artifact is read by the one component whose entire output is validated before it is trusted.
+
+== Syntheses — a materialised view over the store <synthesis>
+
+`synthesis/` holds dated documents that *cite* atoms: the answer to a question, an overview note binding a cluster in the tradition's sense, a comparison of two threads, a topical essay. A synthesis carries no position — a UUID, like a source note — because it belongs to no train of thought; it cuts across them. It has its own vector table and a small frontmatter: `title`, `question`, `created`, `cites`, `supersedes`. The analogy is a materialised view in a database: derived from the tables, refreshable, and never mistaken for one.
+
+One rule carries the whole design. *A synthesis is never the proof of a claim — the proof is always the atoms it cites.* It is a navigational object. This is precisely where the LLM-maintained wiki differs, and where its page *is* the proof. The consequence is that a synthesis may be written automatically and without human review while every guarantee of §3.3 survives intact: an atom is evidence and therefore cannot enter unseen, whereas a synthesis asserts nothing on its own authority, and anything a reader or the judge takes from it must still resolve to an atom. Review is spent where it buys something.
+
+*Retrieval — a fifth channel, consulted before the four rather than beside them.* The other layers answer "which notes are about this"; this one answers "has this road been walked before". A query is matched against the synthesis's `question`, and a hit means the hops are already made, the threads gathered and the citations placed. The judge then does not compose from nothing — it checks the *delta*: how many atoms have been placed in the cited threads since the synthesis was written. That test is a date comparison and a prefix match, costing nothing. An empty delta means the earlier answer still stands; a non-empty one means the judge reads only those atoms and writes a new synthesis superseding the old. The result is a wiki's speed on repeated questions with none of its cost, because nothing is overwritten to get it.
+
+*Structure — the third geometry.* Positional identifiers express threads and the topic map expresses topics, but until now nothing expressed a cross-thread cut except a single wikilink in an atom's body. A synthesis citing twenty atoms from five threads *is* that cut, and it now has somewhere to live instead of being pressed into `index.md` as a "see also" or into the store as a hub-note that is not one idea. Three structural layers, three geometries: threads, topics, cuts. It is also what keeps `index.md` honest — the map surplus goes here, and the topic map stays pure bookmarks.
+
+*Reading budget.* A judge under a probe ceiling reads one synthesis to orient itself rather than fifteen atoms, and opens atoms only when it needs the evidence.
+
+*Analysis.* Because re-synthesis writes a new dated note rather than editing an old one, two answers to the same question a year apart can be diffed, and the store can report how its own view changed — a capability no member of the field surveyed in §6 has, for the simple reason that they all overwrite. Three cheap measures follow from the same data, all grep-and-arithmetic with no model in the loop. *Drift*, per synthesis, is the count of atoms in its cited threads it does not account for; high drift marks a re-synthesis candidate, and it is the natural fourth scheduled job beside adapt, persist and the digest — weekly, because drift is a slow signal and re-synthesis is a judgement. *Coverage* is its inverse: an atom no synthesis cites is knowledge never integrated into an answer, one cited by twenty is load-bearing. That is a better drift signal for a domain charter than per-contributor capture statistics, because it maps what was *asked* onto what was kept rather than counting what was dumped in. And a synthesis citing two atoms joined by `contradicts` is expected to name that tension in prose: the edge is already visible to grep, and the synthesis makes it visible to a reader.
+
+The direction of flow is one-way and load-bearing: atoms compose into syntheses, never the reverse. A synthesis cannot become an atom, so no second-order loop exists in which the system feeds on its own summaries; at most it is the reason an atomiser, reading a conversation transcript later, notices something worth distilling.
 
 == Concurrency and automation
 

@@ -41,7 +41,7 @@ QUICK COMMANDS — instant, no LLM
   /slipbox-help              this help
 
 TERMINAL
-  slipbox {setup|status|lint|digest|inbox|stage|store|show|lookup|accept|reject
+  slipbox {setup|status|lint|syntheses|drift|digest|inbox|stage|store|show|lookup|accept|reject
           |adapt|persist|persist-accepted|purge|schedule|doctor|reindex|help}
 
 THE ATOMISER — distillation is a dedicated agent, not the host
@@ -67,6 +67,7 @@ _LINT_LABELS = {
     "index_dangling": "index.md bookmarks a note that is gone",
     "unindexed": "no index.md topic points here — invisible to 2 of 4 lookup layers",
     "unconnected": "in the order, absent from the graph — no typed connection either way",
+    "unsynthesised": "no synthesis rests on it — knowledge never integrated into an answer",
     "uncited": "atom names no source",
     "broken_threads": "parent ID missing — slipbox_tree cannot reach it",
 }
@@ -436,7 +437,7 @@ def _adapt_detail(report: dict) -> str:
 # CLI subcommands that only read — the surface a read-only deployment keeps.
 _READONLY_CLI = frozenset({
     "status", "inbox", "stage", "store", "show", "lookup",
-    "digest", "schedule", "doctor", "help", "lint",
+    "digest", "schedule", "doctor", "help", "lint", "syntheses", "drift",
 })
 
 
@@ -485,6 +486,10 @@ def _cli_handler(args) -> None:
         print(_render_status(operations.status(root)))
     elif command == "lint":
         print(_render_lint(operations.lint(root)))
+    elif command == "syntheses":
+        _print_json(operations.syntheses(root))
+    elif command == "drift":
+        _print_json(operations.synthesis_drift(root))
     elif command == "inbox":
         print(cmd_inbox(root=root))
     elif command == "stage":
@@ -574,6 +579,9 @@ def setup_argparse(subparser) -> None:
     add("setup", help="Initialize the repository/repositories (first-run setup)")
     add("status", help="Backlog counters")
     add("lint", help="Audit the store for dangling links, unindexed notes and graph orphans")
+    add("syntheses", help="List synthesis/ — dated views over the store, newest first")
+    add("drift", help="Which syntheses have fallen behind the atoms they cite "
+                      "(scheduled job 4: synthesis-drift)")
     add("digest", help="Morning digest (scheduled job 3)")
     add("inbox", help="List inbox entries")
 

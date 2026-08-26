@@ -1140,3 +1140,149 @@ def test_lint_is_registered_as_a_read_tool(repo):
     assert "lint" in commands._READONLY_CLI
     # And it needs no models: this interpreter has none and it still answers.
     assert json.loads(tools.HANDLERS["slipbox_lint"]({})).get("error") is None
+
+
+# --- Syntheses: a materialised view over the store ---------------------------
+
+def _placed(repo, title, body, after=None):
+    """Helper: an atom in the store, so a synthesis has something to cite."""
+    atom = ops.create_atom(title, body, source="[[s]]",
+                           link_after=after,
+                           candidates=None if after else ["new-thread"], root=repo)
+    return ops.persist(atom["path"], root=repo)["id"]
+
+
+def test_a_synthesis_is_a_dated_view_that_cites_atoms(repo):
+    """No position, no review, but it must cite — that is what makes it checkable."""
+    a = _placed(repo, "Head", "The opening claim.")
+    b = _placed(repo, "Tail", "A refinement.", after=a)
+
+    result = ops.create_synthesis(
+        title="Latency comes from coupling, not cost",
+        question="why is p99 bad?",
+        body="Both notes agree the cost is the coupling.",
+        cites=[a, b], root=repo)
+
+    note = notes.load(repo, result["path"])
+    assert note.space == config.SPACE_SYNTHESIS
+    assert note.rel.startswith(config.SYNTHESIS + "/")
+    # A UUID, like a source note: it belongs to no train of thought.
+    assert len(note.id) == 36 and not fz.is_valid(note.id)
+    assert note.cites == [a, b]
+    assert note.get("question") == "why is p99 bad?"
+    assert note.get("created")
+    # It never passes through review — that is the point of the object.
+    assert "review" not in note.frontmatter
+    assert ops.stage(root=repo)["count"] == 0
+
+
+def test_a_synthesis_must_rest_on_real_atoms(repo):
+    a = _placed(repo, "Head", "The opening claim.")
+
+    # Citing nothing proves nothing.
+    with pytest.raises(ops.OperationError):
+        ops.create_synthesis(title="T", body="B", cites=[], root=repo)
+    # A citation the store cannot resolve is a fabricated one.
+    with pytest.raises(ops.OperationError):
+        ops.create_synthesis(title="T", body="B", cites=[a, "9-z"], root=repo)
+    # And a document with no body is a pointer, not a synthesis.
+    with pytest.raises(ops.OperationError):
+        ops.create_synthesis(title="T", body="", cites=[a], root=repo)
+
+
+def test_drift_counts_atoms_placed_after_the_synthesis(repo):
+    """The delta that decides whether an earlier answer still stands."""
+    a = _placed(repo, "Head", "Opening.")
+    ops.create_synthesis(title="View", question="q", body="From one atom.",
+                         cites=[a], created="2020-01-01", root=repo)
+
+    assert ops.synthesis_drift(repo)["syntheses"][0]["drift"] == 0
+
+    # A later atom in the SAME thread is exactly what dates the synthesis.
+    b = _placed(repo, "Tail", "Added later.", after=a)
+    report = ops.synthesis_drift(repo)
+    entry = report["syntheses"][0]
+    assert entry["drift"] == 1 and entry["new_atoms"] == [b]
+    assert report["stale"] and report["stale"][0]["drift"] == 1
+
+    # An atom in an unrelated thread does not date it.
+    _placed(repo, "Elsewhere", "A different subject.")
+    assert ops.synthesis_drift(repo)["syntheses"][0]["drift"] == 1
+
+
+def test_superseding_collects_rather_than_replaces(repo):
+    """A wiki keeps one synthesis by rewriting; the store keeps both, dated."""
+    a = _placed(repo, "Head", "Opening.")
+    old = ops.create_synthesis(title="Old view", question="q", body="Then.",
+                               cites=[a], created="2020-01-01", root=repo)
+    new = ops.create_synthesis(title="New view", question="q", body="Now.",
+                               cites=[a], supersedes=old["path"], root=repo)
+
+    assert (repo / old["path"]).is_file()          # the earlier answer survives
+    assert notes.load(repo, new["path"]).get("supersedes") == old["path"]
+    # A superseded synthesis is history, so it is not a re-synthesis candidate
+    # however far it has drifted.
+    _placed(repo, "Tail", "Added later.", after=a)
+    report = ops.synthesis_drift(repo)
+    superseded = next(e for e in report["syntheses"] if e["path"] == old["path"])
+    assert superseded["drift"] >= 1 and superseded["superseded_by"] == new["path"]
+    assert old["path"] not in [e["path"] for e in report["stale"]]
+
+
+def test_coverage_reports_atoms_no_synthesis_rests_on(repo):
+    """The inverse of a wiki orphan: knowledge never integrated into an answer."""
+    a = _placed(repo, "Cited", "Used in an answer.")
+    b = _placed(repo, "Uncited", "Never asked about.")
+    # With no syntheses at all the check stays silent rather than flagging
+    # every note in the store.
+    assert ops.lint(repo)["findings"]["unsynthesised"] == []
+
+    ops.create_synthesis(title="View", body="From one atom.", cites=[a], root=repo)
+    assert ops.lint(repo)["findings"]["unsynthesised"] == [b]
+
+
+def test_the_synthesis_channel_is_registered_and_write_gated(repo):
+    import json
+
+    from slipbox import schemas, tools
+
+    read = {s["name"] for s in schemas.READ_ONLY}
+    write = {s["name"] for s in schemas.WRITING}
+    assert {"slipbox_syntheses", "slipbox_drift"} <= read
+    assert "slipbox_synthesise" in write        # it writes and commits
+    assert config.SPACE_SYNTHESIS in config.SPACES
+    # Reads answer on a store with no syntheses rather than erroring.
+    assert json.loads(tools.HANDLERS["slipbox_syntheses"]({}))["count"] == 0
+    assert json.loads(tools.HANDLERS["slipbox_drift"]({}))["count"] == 0
+
+
+def test_a_synthesis_embeds_the_question_it_answers(repo):
+    """The lead channel matches a query against a QUESTION, so it must be embedded.
+
+    Left out, the same question-to-synthesis pair measured 0.43 on a real store —
+    past the lead threshold — and the channel never fired once on a store holding
+    exactly the answer being asked for. Embedding the question brought it to 0.37.
+    """
+    a = _placed(repo, "Head", "The opening claim.")
+    result = ops.create_synthesis(title="A title that shares no words with the ask",
+                                  question="why is p99 latency bad?",
+                                  body="Prose that also shares none.",
+                                  cites=[a], root=repo)
+    text = notes.load(repo, result["path"]).embed_text()
+    assert text.startswith("why is p99 latency bad?")
+
+    # An atom is unaffected: it has no question, and its title still leads.
+    assert notes.load(repo, f"{config.STORE}/{a}.md").embed_text().startswith("Head")
+
+
+def test_the_lead_threshold_admits_a_paraphrase_and_rejects_a_neighbour():
+    """Calibrated from measurements, not by analogy to the atom scale.
+
+    A synthesis embeds question + title + body against a one-sentence query, so
+    distances run systematically higher than for atoms: a verbatim re-ask
+    measured 0.325, a paraphrase 0.369, a different question about the same
+    subject 0.469. A threshold borrowed from the atom scale (0.35) sat inside the
+    true positives.
+    """
+    threshold = config.synthesis_lead_distance()
+    assert 0.369 < threshold < 0.469, threshold

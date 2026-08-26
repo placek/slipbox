@@ -34,6 +34,7 @@ TABLES = {
     config.SPACE_STORE: "vec_store",
     config.SPACE_SOURCE: "vec_source",
     config.SPACE_STAGE: "vec_stage",
+    config.SPACE_SYNTHESIS: "vec_synthesis",
 }
 
 

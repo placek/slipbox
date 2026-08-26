@@ -275,6 +275,173 @@ def tree(ident: str, root: Path | None = None) -> dict:
     }
 
 
+def create_synthesis(title: str, body: str, question: str = "", cites=None,
+                     supersedes: str | None = None, created: str | None = None,
+                     root: Path | None = None) -> dict:
+    """Write a synthesis — a dated view over the store, citing the atoms it rests on.
+
+    Deliberately *not* review-gated, which is the whole point of the object. A
+    synthesis is never the proof of a claim: the proof is the atoms it cites, and
+    a reader (or the judge) can always resolve through it to them. Because it
+    asserts nothing on its own authority, letting a model write one unreviewed
+    costs nothing the store guarantees — unlike an atom, which *is* the evidence
+    and therefore cannot enter unseen.
+
+    It also carries no position. A train of thought is a property of atoms; a
+    synthesis cuts across threads, so a Folgezettel identifier would be a lie
+    about where it belongs. It gets a UUID, like a source note.
+
+    Superseding is *collection*, not replacement: `supersedes` records which
+    earlier synthesis this one answers past, and the earlier one stays readable.
+    A wiki keeps one synthesis by rewriting it and can never show you how its
+    view changed; a store that keeps every dated answer can diff them.
+    """
+    root = _root(root)
+    title = (title or "").strip()
+    if not title:
+        raise OperationError("a synthesis needs a title")
+    body = (body or "").strip()
+    if not body:
+        raise OperationError("a synthesis needs a body — it is a document, not a pointer")
+
+    cited = notes.as_list(cites)
+    if not cited:
+        raise OperationError(
+            "a synthesis must cite the atoms it rests on (`cites`) — one that cites "
+            "nothing proves nothing and cannot be checked"
+        )
+
+    with locks.hold(locks.REPO, locks.DB, root=root):
+        notes.ensure_layout(root)
+        known = set(notes.store_ids(root))
+        resolved = [c.strip().strip("[]").split("/")[-1] for c in cited]
+        unknown = [c for c in resolved if c not in known]
+        if unknown:
+            raise OperationError(
+                f"cites unknown store note(s): {', '.join(unknown)} — a synthesis may "
+                "only rest on placed atoms"
+            )
+        if supersedes and notes.resolve(root, supersedes) is None:
+            raise OperationError(f"no such synthesis to supersede: {supersedes}")
+
+        path = notes.unique_path(root / config.SYNTHESIS, notes.slugify(question or title))
+        frontmatter = {
+            "id": notes.new_uuid(),
+            "title": title,
+            "question": question or "",
+            "created": created or notes.today(),
+            "cites": [f"[[{c}]]" for c in resolved],
+            "supersedes": supersedes or "",
+        }
+        path.write_text(notes.compose(frontmatter, body), encoding="utf-8")
+        note = notes.Note(path, root)
+        indexed, _ = _embed_vector(root, note, config.SPACE_SYNTHESIS)
+        commit = gitops.commit(f"slipbox: synthesis — {title}", root)
+    return {
+        "path": note.rel,
+        "id": frontmatter["id"],
+        "title": title,
+        "question": frontmatter["question"],
+        "cites": resolved,
+        "supersedes": supersedes or None,
+        "created": frontmatter["created"],
+        "embedding": indexed,
+        "commit": commit,
+    }
+
+
+def syntheses(root: Path | None = None) -> dict:
+    """List `synthesis/`, newest first, with the drift each has accumulated."""
+    root = _root(root)
+    drift = {d["path"]: d for d in synthesis_drift(root)["syntheses"]}
+    entries = []
+    for note in notes.synthesis_notes(root):
+        entry = drift.get(note.rel, {})
+        entries.append({
+            "path": note.rel,
+            "id": note.id,
+            "title": note.title,
+            "question": note.get("question") or "",
+            "created": note.get("created"),
+            "cites": note.cites,
+            "supersedes": note.get("supersedes") or None,
+            "drift": entry.get("drift", 0),
+            "superseded_by": entry.get("superseded_by"),
+        })
+    return {"count": len(entries), "entries": entries}
+
+
+def synthesis_drift(root: Path | None = None) -> dict:
+    """How far each synthesis has fallen behind the atoms it rests on.
+
+    Drift is the count of atoms in the threads a synthesis cites that it does not
+    account for, dated on or after it — the material it would have used had it
+    existed. High drift marks a re-synthesis candidate.
+
+    "On or after", not "after", because `created` has day granularity: with a
+    strict comparison an atom placed hours after a synthesis, on the same day,
+    registered as no drift at all, which is exactly the case a re-synthesis
+    prompt should catch. The cost of the looser test is that a synthesis which
+    *deliberately* omits a same-day sibling shows one unit of drift permanently.
+    That is the right way round: the metric is a prompt to look, not a verdict.
+
+    Cheap by construction: a date comparison and a prefix match, no models. That
+    matters because this is meant to run as a scheduled job beside adapt, persist
+    and the digest, on a store far larger than the one it is tested on.
+
+    The thread of a citation, not the citation itself, is what is watched: a new
+    atom refining a cited note is exactly the thing that dates a synthesis, and it
+    has a different ID from the note it refines.
+    """
+    root = _root(root)
+    store = notes.store_notes(root)
+    by_id = {n.stem: n for n in store}
+    superseded = {
+        str(n.get("supersedes") or "").strip()
+        for n in notes.synthesis_notes(root) if n.get("supersedes")
+    }
+
+    entries = []
+    for note in notes.synthesis_notes(root):
+        created = str(note.get("created") or "")
+        threads = {folgezettel.branch_root(c) for c in note.cites
+                   if folgezettel.is_valid(c)}
+        newer = [
+            atom.stem for atom in store
+            if folgezettel.is_valid(atom.stem)
+            and folgezettel.branch_root(atom.stem) in threads
+            and atom.stem not in note.cites
+            and str(atom.get("created") or "") >= created
+        ]
+        entries.append({
+            "path": note.rel,
+            "title": note.title,
+            "question": note.get("question") or "",
+            "created": created,
+            "cites": len(note.cites),
+            "threads": sorted(threads),
+            "drift": len(newer),
+            "new_atoms": folgezettel.order(newer),
+            # A synthesis another one supersedes is history, not a stale view —
+            # it is not a re-synthesis candidate however far it has drifted.
+            "superseded_by": next(
+                (s.rel for s in notes.synthesis_notes(root)
+                 if str(s.get("supersedes") or "").strip() in (note.rel, note.stem, note.id)),
+                None,
+            ),
+        })
+    stale = [e for e in entries
+             if e["drift"] and not e["superseded_by"]]
+    return {
+        "count": len(entries),
+        "syntheses": entries,
+        "stale": sorted(stale, key=lambda e: -e["drift"]),
+        "missing_ids": sorted(superseded - {n.rel for n in notes.synthesis_notes(root)}
+                              - {n.stem for n in notes.synthesis_notes(root)}
+                              - {n.id for n in notes.synthesis_notes(root)}),
+    }
+
+
 def lint(root: Path | None = None) -> dict:
     """Audit the store for the failures that hide rather than announce themselves.
 
@@ -326,11 +493,18 @@ def lint(root: Path | None = None) -> dict:
             if note_id not in known_ids:
                 index_dangling.append({"topic": " > ".join(entry["path"]), "id": note_id})
 
+    # Coverage: which atoms any synthesis rests on. An atom no synthesis cites is
+    # knowledge that has never been integrated into an answer — the inverse of a
+    # wiki orphan, and a better signal than capture statistics, because it maps
+    # what was asked onto what was kept rather than counting what was dumped in.
+    cited = {c for note in notes.synthesis_notes(root) for c in note.cites}
+
     findings = {
         "dangling_links": dangling,
         "index_dangling": index_dangling,
         "unindexed": [n.stem for n in store if n.stem not in indexed],
         "unconnected": [n.stem for n in store if n.stem not in connected],
+        "unsynthesised": [n.stem for n in store if n.stem not in cited] if cited else [],
         "uncited": [n.rel for n in store + staged if not n.sources],
         "broken_threads": [
             n.stem for n in store

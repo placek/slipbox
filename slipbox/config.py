@@ -26,6 +26,16 @@ STORE = "store"
 STORE_ATTACHMENTS = "store/.attachments"
 SOURCE = "source"
 SOURCE_ATTACHMENTS = "source/.attachments"  # bibliography notes + cold originals
+# Syntheses — a materialised view over the store, never the store itself. A
+# synthesis is a dated document that CITES atoms: the answer to a question, an
+# overview note binding a cluster, a comparison across threads. It carries no
+# position (a UUID, like a source note) because it belongs to no train of
+# thought; it is a navigational object, and the proof of anything it says is
+# always the atoms it cites. That single rule is why it needs no human review and
+# can still enter retrieval: the judge treats it as a lead, and whatever it takes
+# from it must still resolve to an atom.
+SYNTHESIS = "synthesis"
+SYNTHESIS_ATTACHMENTS = "synthesis/.attachments"
 INDEX_FILE = "index.md"
 SOUL_FILE = "SOUL.md"
 DB_FILE = "embeddings.db"
@@ -34,7 +44,7 @@ LOCK_DIR = ".slipbox-locks"
 # Directories created by `ensure_layout` / on first write.
 DIRECTORIES = (
     INBOX, INBOX_ATTACHMENTS, STAGE, STAGE_ATTACHMENTS, STORE, STORE_ATTACHMENTS,
-    SOURCE, SOURCE_ATTACHMENTS,
+    SOURCE, SOURCE_ATTACHMENTS, SYNTHESIS, SYNTHESIS_ATTACHMENTS,
 )
 
 # Vector spaces (whitepaper §"Semantic layer") — one sqlite-vec table per space,
@@ -43,7 +53,13 @@ DIRECTORIES = (
 SPACE_STORE = "store"
 SPACE_SOURCE = "source"
 SPACE_STAGE = "stage"
-SPACES = (SPACE_STORE, SPACE_SOURCE, SPACE_STAGE)
+# Syntheses get their own space for the same reason, and one more: the synthesis
+# channel is consulted *before* the other four, not merged with them. "A question
+# already answered" is a different question from "a note about this", and a hit
+# means the hops were already walked — so it must not be post-filtered out of a
+# ranking it never belonged in.
+SPACE_SYNTHESIS = "synthesis"
+SPACES = (SPACE_STORE, SPACE_SOURCE, SPACE_STAGE, SPACE_SYNTHESIS)
 
 # Review statuses of `stage/` entries (whitepaper §"Human review").
 REVIEW_PENDING = "pending"
@@ -625,6 +641,33 @@ def positional_distance() -> float:
     return _float("SLIPBOX_POSITIONAL_DISTANCE", 0.55)
 
 
+def synthesis_lead_distance() -> float:
+    """How near a synthesis must be to the query to be offered as a lead.
+
+    This channel needs its own threshold rather than the atom scale, because a
+    synthesis embeds a question, a title and a document, while a query is one
+    sentence — so even a verbatim re-ask never lands near zero. Measured on a
+    real store against one synthesis:
+
+        verbatim re-ask of its own question   0.325
+        paraphrase of it                      0.369
+        same subject, different wording       0.337
+        related but a DIFFERENT question      0.469
+        a question the store answers elsewhere 0.647
+        unrelated                             0.707
+
+    The gap between 0.37 and 0.47 is the decision, so 0.42 sits in it with margin
+    on both sides. An earlier 0.35 — reasoned by analogy to atom distances rather
+    than measured — cut straight through the true positives, and the channel
+    never fired once on a store that had exactly the answer being asked for.
+
+    Silence is cheap: it just means the four layers answer normally. A false lead
+    is not, because it is a plausible ready-made answer to a question nobody
+    asked, so the threshold errs toward silence.
+    """
+    return _float("SLIPBOX_SYNTHESIS_LEAD_DISTANCE", 0.42)
+
+
 def both_layers_bonus() -> float:
     """How much agreement between the two layers improves a candidate's rank.
 
@@ -668,6 +711,11 @@ def cron_schedules() -> dict[str, str]:
         "auto-adapt": _env("SLIPBOX_CRON_ADAPT", default="0 22 * * *"),
         "persist": _env("SLIPBOX_CRON_PERSIST", default="0 3 * * *"),
         "digest": _env("SLIPBOX_CRON_DIGEST", default="0 7 * * *"),
+        # Fourth job: which syntheses have fallen behind the atoms they cite.
+        # Weekly, not nightly — drift is a slow signal and re-synthesis is a
+        # judgement call, so waking someone daily about it would train them to
+        # ignore it.
+        "synthesis-drift": _env("SLIPBOX_CRON_DRIFT", default="0 6 * * 1"),
     }
 
 
