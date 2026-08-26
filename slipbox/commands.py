@@ -25,6 +25,7 @@ SKILLS — interactive, they use the conversation
   slipbox:review             accept/reject pending atoms per source, shape them
   slipbox:link [entry]       place an accepted atom in the store (alias: persist)
   slipbox:search <question>  answer from the store, with references
+  slipbox:synthesise         keep an answer as a dated view citing its atoms
 
 QUICK COMMANDS — instant, no LLM
   /slipbox-adapt [entry]     distil in the background (dedicated atomiser agent)

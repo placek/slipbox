@@ -32,6 +32,7 @@ capture ─▶ inbox/ ─── adapt ──▶ stage/ ─── review ──�
 | Batch adapt | `slipbox:triage` | Sweep the whole inbox backlog end-to-end (the interactive form of the nightly auto-adapt job). |
 | Re-extraction | `slipbox:readapt` | Re-read a source's archived original with a better model and propose *additional* atoms through review — the fidelity-ceiling escape hatch. |
 | Topic-map upkeep | `slipbox:consolidate` | Split oversized topics and grow the bookmark hierarchy by the single-parameter-N rule, never dropping a note. |
+| Synthesis | `slipbox:synthesise` | Keep an answer, an overview or a cross-thread comparison as a dated view citing its atoms — and supersede an earlier one that has drifted. |
 | Admin oversight | `slipbox:oversight` | Surface domain drift from per-contributor scope statistics and guide charter-level decisions. |
 | Store audit | `slipbox_lint` | Find what degraded quietly — unreachable notes, an empty connection graph, links pointing nowhere. |
 
@@ -309,7 +310,7 @@ slipbox/
 ├── templates/SOUL.md  the deployment SOUL seed (fill in the domain charter)
 ├── templates/ATOMIZER.md  the atomiser's default instructions (the contract)
 └── skills/            capture · adapt · review · link · search
-                       · triage · readapt · consolidate · oversight
+                       · triage · readapt · consolidate · oversight · synthesise
 ```
 
 ## Running

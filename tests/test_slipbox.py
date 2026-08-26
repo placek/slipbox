@@ -1286,3 +1286,40 @@ def test_the_lead_threshold_admits_a_paraphrase_and_rejects_a_neighbour():
     """
     threshold = config.synthesis_lead_distance()
     assert 0.369 < threshold < 0.469, threshold
+
+
+def test_the_synthesise_skill_is_registered_and_withheld_when_read_only():
+    """It writes and commits, so a read-only deployment must not be offered it."""
+    from pathlib import Path as P
+
+    import slipbox
+
+    skill = P(slipbox.__file__).parent / "skills" / "synthesise" / "SKILL.md"
+    assert skill.is_file()
+    text = skill.read_text()
+    assert "requires_toolsets: [slipbox]" in text     # hermes refuses it unbound
+    assert "name: synthesise" in text
+
+    # `search` is the only skill a read-only agent gets; synthesise is a write.
+    assert slipbox.READONLY_SKILLS == ("search",)
+    assert "synthesise" not in slipbox.READONLY_SKILLS
+
+    # The rule the whole object rests on has to be stated in the skill itself,
+    # because nothing else enforces it — there is no review gate behind this one.
+    assert "never the proof of a claim" in text
+    assert "one-way" in text                          # atoms -> syntheses, never back
+
+
+def test_every_skill_declares_the_toolset_it_drives():
+    """A skill whose mechanics are unbound would fail mid-flow, not at start."""
+    from pathlib import Path as P
+
+    import slipbox
+
+    for skill in sorted((P(slipbox.__file__).parent / "skills").iterdir()):
+        md = skill / "SKILL.md"
+        if not md.is_file():
+            continue
+        text = md.read_text()
+        assert "requires_toolsets: [slipbox]" in text, skill.name
+        assert text.startswith("---\nname: "), skill.name
