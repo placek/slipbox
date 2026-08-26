@@ -139,6 +139,10 @@ def slipbox_original(args: dict, **_) -> str:
     return _run(args, "slipbox_original", lambda root: operations.original(args.get("ident", ""), root))
 
 
+def slipbox_lint(args: dict, **_) -> str:
+    return _run(args, "slipbox_lint", lambda root: operations.lint(root))
+
+
 def slipbox_status(args: dict, **_) -> str:
     return _run(args, "slipbox_status", lambda root: operations.status(root))
 
@@ -403,6 +407,7 @@ HANDLERS = {
     "slipbox_backlinks": slipbox_backlinks,
     "slipbox_index": slipbox_index,
     "slipbox_original": slipbox_original,
+    "slipbox_lint": slipbox_lint,
     "slipbox_status": slipbox_status,
     "slipbox_log": slipbox_log,
     "slipbox_schedule": slipbox_schedule,

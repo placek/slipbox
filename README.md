@@ -33,6 +33,7 @@ capture ─▶ inbox/ ─── adapt ──▶ stage/ ─── review ──�
 | Re-extraction | `slipbox:readapt` | Re-read a source's archived original with a better model and propose *additional* atoms through review — the fidelity-ceiling escape hatch. |
 | Topic-map upkeep | `slipbox:consolidate` | Split oversized topics and grow the bookmark hierarchy by the single-parameter-N rule, never dropping a note. |
 | Admin oversight | `slipbox:oversight` | Surface domain drift from per-contributor scope statistics and guide charter-level decisions. |
+| Store audit | `slipbox_lint` | Find what degraded quietly — unreachable notes, an empty connection graph, links pointing nowhere. |
 
 ## The tools — the deterministic surface the skills drive
 
@@ -57,6 +58,7 @@ tools fall in three groups (`__init__._active_schemas`):
 | `slipbox_index` | `index.md` parsed into a nested topic map with entry-note IDs. |
 | `slipbox_original` | A source's archived original from cold storage — deliberate, quarantined, never embedded (powers `readapt`). |
 | `slipbox_status` · `slipbox_log` · `slipbox_schedule` | Backlog counters + drift signal; a note's git history; cron/job/lock state. |
+| `slipbox_lint` | The silent faults: dangling wikilinks, store notes no topic points at, notes absent from the connection graph, uncited atoms, broken threads. No models needed. |
 | `slipbox_adapt_status` | Progress of the background distillation jobs, and whether the atomiser's model is reachable. |
 
 **Gated — the interactive read path** (`slipbox_search`, `slipbox_quote`): the

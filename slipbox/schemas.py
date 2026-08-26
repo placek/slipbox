@@ -130,6 +130,19 @@ SLIPBOX_BACKLINKS = {
     },
 }
 
+SLIPBOX_LINT = {
+    "name": "slipbox_lint",
+    "description": (
+        "Audit the store for silent faults — the ones that never raise and only "
+        "show up as a question that returns nothing. Reports dangling wikilinks, "
+        "store notes no index.md topic points at (invisible to the structural AND "
+        "positional lookup layers), notes absent from the typed-connection graph, "
+        "atoms citing no source, index bookmarks pointing at deleted notes, and "
+        "Folgezettel IDs whose parent is missing. Pure reads, no models needed."
+    ),
+    "parameters": {"type": "object", "properties": {}},
+}
+
 SLIPBOX_INDEX = {
     "name": "slipbox_index",
     "description": "Return index.md parsed into a nested topic structure with entry-note IDs.",
@@ -692,7 +705,7 @@ SLIPBOX_ADAPT_STATUS = {
 READ_ONLY = (
     SLIPBOX_SHOW, SLIPBOX_LOOKUP, SLIPBOX_INBOX, SLIPBOX_STAGE, SLIPBOX_SOURCES,
     SLIPBOX_STORE, SLIPBOX_TREE, SLIPBOX_BACKLINKS, SLIPBOX_INDEX, SLIPBOX_ORIGINAL,
-    SLIPBOX_STATUS, SLIPBOX_LOG, SLIPBOX_SCHEDULE, SLIPBOX_ADAPT_STATUS,
+    SLIPBOX_STATUS, SLIPBOX_LOG, SLIPBOX_SCHEDULE, SLIPBOX_ADAPT_STATUS, SLIPBOX_LINT,
 )
 
 GATED = (SLIPBOX_SEARCH, SLIPBOX_QUOTE)

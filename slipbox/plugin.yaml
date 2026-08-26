@@ -22,6 +22,7 @@ provides_tools:
   - slipbox_index
   - slipbox_original
   - slipbox_status
+  - slipbox_lint
   - slipbox_log
   - slipbox_schedule
   - slipbox_adapt_status

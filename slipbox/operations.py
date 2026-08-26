@@ -275,6 +275,82 @@ def tree(ident: str, root: Path | None = None) -> dict:
     }
 
 
+def lint(root: Path | None = None) -> dict:
+    """Audit the store for the failures that hide rather than announce themselves.
+
+    Every check here is a *silent* fault: the store keeps working, the tools keep
+    answering, and the damage only shows up as a question that returns nothing.
+    They were found by running the thing end to end — a store whose entire graph
+    layer was empty reported no error anywhere, and half the notes in another were
+    unreachable by two of the four lookup layers.
+
+    Deliberately deterministic: no embedder, no reranker, no judge. A lint that
+    only runs where the semantic layer is installed cannot be the thing you reach
+    for when retrieval is behaving oddly.
+
+    * `dangling_links` — a `[[target]]` that resolves to nothing. A citation that
+      silently goes nowhere is worse than an absent one.
+    * `index_dangling` — `index.md` bookmarks a note that no longer exists.
+    * `unindexed` — a store note no `index.md` topic points at. It is invisible to
+      the structural layer AND to the positional one, which only runs on a
+      structural hit — so two of the four layers never see it.
+    * `unconnected` — a store note with no typed connection in either direction:
+      present in the order, absent from the graph.
+    * `uncited` — an atom that names no source. The one thing every atom owes.
+    * `broken_threads` — a Folgezettel ID whose parent is missing (`1-a-1` with no
+      `1-a`), so `slipbox_tree` cannot walk to it.
+    """
+    root = _root(root)
+    store = notes.store_notes(root)
+    staged = notes.stage_notes(root)
+    pool = store + staged + notes.source_notes(root) + notes.inbox_notes(root)
+    resolve = notes.resolver(pool)
+    known_ids = {n.stem for n in store}
+
+    dangling, connected = [], set()
+    for note in pool:
+        for link in note.links:
+            if resolve(link) is None:
+                dangling.append({"note": note.rel, "target": link})
+        for typed in notes.typed_links(note.body):
+            target = resolve(typed["target"])
+            if target is not None:
+                connected.add(note.stem)
+                connected.add(target.stem)
+
+    indexed: set[str] = set()
+    index_dangling = []
+    for entry in indexmd.parse(root):
+        for note_id in entry["ids"]:
+            indexed.add(note_id)
+            if note_id not in known_ids:
+                index_dangling.append({"topic": " > ".join(entry["path"]), "id": note_id})
+
+    findings = {
+        "dangling_links": dangling,
+        "index_dangling": index_dangling,
+        "unindexed": [n.stem for n in store if n.stem not in indexed],
+        "unconnected": [n.stem for n in store if n.stem not in connected],
+        "uncited": [n.rel for n in store + staged if not n.sources],
+        "broken_threads": [
+            n.stem for n in store
+            if (parent := folgezettel.parent(n.stem)) and parent not in known_ids
+        ],
+    }
+    return {
+        "root": str(root),
+        "checked": {"store": len(store), "stage": len(staged), "notes": len(pool)},
+        "findings": findings,
+        "counts": {name: len(items) for name, items in findings.items()},
+        "clean": not any(findings.values()),
+        "next_step": (
+            "`unindexed` is fixed by slipbox:consolidate (or slipbox_index_add), "
+            "`unconnected` by slipbox:readapt with guidance to link, and a dangling "
+            "link by editing the citing note."
+        ),
+    }
+
+
 def backlinks(ident: str, root: Path | None = None) -> dict:
     """Notes whose wikilinks point at `ident` — for a source: its atoms."""
     root = _root(root)

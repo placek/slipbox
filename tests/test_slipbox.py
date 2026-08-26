@@ -1073,3 +1073,70 @@ def test_a_distilled_atom_lands_with_its_links_in_the_body(repo):
     assert "contradicts [[1]]" in second.body
     assert f"refines [[{created[0]['proposed_id']}]]" in second.body
     assert {l["verb"] for l in notes.typed_links(second.body)} == {"contradicts", "refines"}
+
+
+def test_lint_reports_the_faults_that_never_raise(repo):
+    """Each finding is a fault the store keeps working through.
+
+    Found by running the thing end to end: one live store had its entire typed
+    connection graph empty and another had half its notes unreachable by two of
+    the four lookup layers, and neither reported anything wrong anywhere.
+    """
+    # A clean two-note thread: placed, indexed, connected, cited.
+    src = ops.create_source("A source", source_type="article", root=repo)
+    link = f"[[{src['path'][:-3]}]]"
+    head = ops.create_atom("Head", "The opening claim.", source=link,
+                           candidates=["new-thread"], root=repo)
+    ops.persist(head["path"], root=repo)
+    tail = ops.create_atom("Tail", f"A refinement. refines [[1]]", source=link,
+                           link_after="1", root=repo)
+    ops.persist(tail["path"], root=repo)
+    indexmd.add(repo, ["Topic"], "1", "Head")
+    indexmd.add(repo, ["Topic"], "1-a", "Tail")
+
+    clean = ops.lint(repo)
+    assert clean["clean"] is True, clean["findings"]
+    assert clean["checked"]["store"] == 2
+
+    # Now introduce one of each fault.
+    (repo / config.STORE / "1-a.md").write_text(
+        (repo / config.STORE / "1-a.md").read_text().replace("refines [[1]]",
+                                                             "refines [[9-z]]"))
+    orphan = ops.create_atom("Orphan", "Cites nothing, links nothing.",
+                             candidates=["new-thread"], root=repo)
+    ops.persist(orphan["path"], root=repo)          # store/2 — unindexed, unconnected, uncited
+    indexmd.add(repo, ["Topic"], "7-q", "A note that was never placed")
+
+    report = ops.lint(repo)
+    counts = report["counts"]
+    assert report["clean"] is False
+    assert {"note": "store/1-a.md", "target": "9-z"} in report["findings"]["dangling_links"]
+    assert report["findings"]["index_dangling"] == [{"topic": "Topic", "id": "7-q"}]
+    assert report["findings"]["unindexed"] == ["2"]
+    assert "2" in report["findings"]["unconnected"]
+    assert "store/2.md" in report["findings"]["uncited"]
+    # The broken link cost 1-a its graph membership too — it now points nowhere.
+    assert counts["dangling_links"] == 1 and counts["uncited"] == 1
+
+
+def test_lint_detects_a_thread_with_a_missing_parent(repo):
+    """`1-a-1` with no `1-a`: slipbox_tree cannot walk to it."""
+    ops.create_source("S", source_type="article", root=repo)
+    (repo / config.STORE).mkdir(parents=True, exist_ok=True)
+    (repo / config.STORE / "4-b-1.md").write_text(
+        "---\nid: 4-b-1\ntitle: Stranded\nsource:\n  - \"[[x]]\"\n---\n\nBody.\n")
+    assert ops.lint(repo)["findings"]["broken_threads"] == ["4-b-1"]
+
+
+def test_lint_is_registered_as_a_read_tool(repo):
+    """It must reach a read-only deployment — that is when you most need it."""
+    import json
+
+    from slipbox import commands, schemas, tools
+
+    names = {s["name"] for s in schemas.READ_ONLY}
+    assert "slipbox_lint" in names
+    assert "slipbox_lint" not in {s["name"] for s in schemas.WRITING}
+    assert "lint" in commands._READONLY_CLI
+    # And it needs no models: this interpreter has none and it still answers.
+    assert json.loads(tools.HANDLERS["slipbox_lint"]({})).get("error") is None

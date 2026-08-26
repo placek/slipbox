@@ -41,7 +41,7 @@ QUICK COMMANDS — instant, no LLM
   /slipbox-help              this help
 
 TERMINAL
-  slipbox {setup|status|digest|inbox|stage|store|show|lookup|accept|reject
+  slipbox {setup|status|lint|digest|inbox|stage|store|show|lookup|accept|reject
           |adapt|persist|persist-accepted|purge|schedule|doctor|reindex|help}
 
 THE ATOMISER — distillation is a dedicated agent, not the host
@@ -59,6 +59,41 @@ RULES OF THE HOUSE
 
 
 # --- Rendering ---------------------------------------------------------------
+
+# What each lint finding costs, in the terms someone deciding whether to act
+# needs — the consequence, not the rule that was broken.
+_LINT_LABELS = {
+    "dangling_links": "wikilink resolves to nothing",
+    "index_dangling": "index.md bookmarks a note that is gone",
+    "unindexed": "no index.md topic points here — invisible to 2 of 4 lookup layers",
+    "unconnected": "in the order, absent from the graph — no typed connection either way",
+    "uncited": "atom names no source",
+    "broken_threads": "parent ID missing — slipbox_tree cannot reach it",
+}
+
+
+def _render_lint(data: dict) -> str:
+    checked = data["checked"]
+    lines = [f"repo: {data['root']}",
+             f"checked: {checked['store']} store · {checked['stage']} stage "
+             f"· {checked['notes']} notes total"]
+    if data["clean"]:
+        lines.append("clean — nothing to report")
+        return "\n".join(lines)
+    for name, items in data["findings"].items():
+        if not items:
+            continue
+        lines.append(f"\n{name}: {len(items)} — {_LINT_LABELS.get(name, '')}")
+        for item in items[:12]:
+            if isinstance(item, dict):
+                lines.append("  " + " → ".join(str(v) for v in item.values()))
+            else:
+                lines.append(f"  {item}")
+        if len(items) > 12:
+            lines.append(f"  … and {len(items) - 12} more")
+    lines.append(f"\n{data['next_step']}")
+    return "\n".join(lines)
+
 
 def _render_status(data: dict) -> str:
     inbox = data["inbox"]
@@ -401,7 +436,7 @@ def _adapt_detail(report: dict) -> str:
 # CLI subcommands that only read — the surface a read-only deployment keeps.
 _READONLY_CLI = frozenset({
     "status", "inbox", "stage", "store", "show", "lookup",
-    "digest", "schedule", "doctor", "help",
+    "digest", "schedule", "doctor", "help", "lint",
 })
 
 
@@ -448,6 +483,8 @@ def _cli_handler(args) -> None:
         return
     if command == "status":
         print(_render_status(operations.status(root)))
+    elif command == "lint":
+        print(_render_lint(operations.lint(root)))
     elif command == "inbox":
         print(cmd_inbox(root=root))
     elif command == "stage":
@@ -536,6 +573,7 @@ def setup_argparse(subparser) -> None:
 
     add("setup", help="Initialize the repository/repositories (first-run setup)")
     add("status", help="Backlog counters")
+    add("lint", help="Audit the store for dangling links, unindexed notes and graph orphans")
     add("digest", help="Morning digest (scheduled job 3)")
     add("inbox", help="List inbox entries")
 
