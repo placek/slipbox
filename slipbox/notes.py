@@ -34,6 +34,13 @@ _UNSAFE_YAML = re.compile(r"^[\s>|&*!%@`{\[\]}#,]|[:#]\s|[\"']|\s$")
 LINK_VERBS = ("extends", "refines", "contradicts", "supersedes", "variant_of",
               "corrects", "source")
 
+# The subset the atomiser may *propose* as an atom's connections. `source` is the
+# citation and is written from the source note, not chosen; `variant_of` is a
+# reviewer's verdict with its own frontmatter slot. What remains is the semantic
+# graph — how one idea stands to another — which is the whole point of linking
+# and, until the plan schema gained a slot for it, was never emitted at all.
+CONNECTION_VERBS = ("extends", "refines", "contradicts", "supersedes", "corrects")
+
 
 # --- Frontmatter -------------------------------------------------------------
 

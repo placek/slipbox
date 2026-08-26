@@ -21,8 +21,8 @@ be recombined into arguments its source never anticipated. Concretely, each atom
 - is **screen-sized** — if it does not fit on one screen without scrolling, it is
   more than one idea. Split it;
 - **cites its source** using the source wikilink you are given;
-- **links what it relates to**: use `[[id]]` in the body for a note it extends or
-  refines, and write `contradicts [[id]]` when it opposes one.
+- **links what it relates to** — through the `connections` field, never by
+  writing wikilinks into the body yourself. See "Connections" below.
 
 What an atom is *not*: a verbatim quotation, a buzzword, a marginal reminder, a
 bibliographic detail, or a restatement of the sentence before it.
@@ -40,8 +40,30 @@ left out.
 **Dis-confirming material earns special weight.** An idea that contradicts what
 the store already holds is among the most valuable things you can produce,
 because it opens a contrasting thread. Never soften it, never drop it for being
-inconsistent: link it explicitly with `contradicts [[id]]` and say so in the
-placement rationale.
+inconsistent: give it a `contradicts` connection and say so in the placement
+rationale.
+
+## Connections — what the atom MEANS, not where it sits
+
+Placement (`link_after` / `continues` / `new_thread`) says where an atom sits in
+the order. `connections` says how its idea stands to another, and the two are
+independent: an atom can continue the thread above it while contradicting a note
+on the far side of the store.
+
+Each entry is one relation and one target:
+
+- `relation` — one of `extends`, `refines`, `contradicts`, `supersedes`,
+  `corrects`.
+- `note` — a store ID from the related notes you were shown, **or**
+- `atom` — the 0-based index of an *earlier* atom in this same batch.
+
+Give exactly one of `note` or `atom`. Never both, never a later atom, never an ID
+that was not shown to you. Leave `connections` empty when an atom genuinely
+stands alone — an invented edge is worse than no edge, because a reader cannot
+tell a wrong link from a checked one.
+
+**Do not write wikilinks into the body.** State the relation here and the markup
+is added for you. A body you hand-format is a body that gets it subtly wrong.
 
 ## Placement — thread by default, open a thread only when you must
 
@@ -135,7 +157,11 @@ Emit **one JSON object**, no prose before or after, no code fences:
       "continues": null,
       "new_thread": true,
       "new_thread_topic": "the topic it opens",
-      "rationale": "one sentence on why it goes there"
+      "rationale": "one sentence on why it goes there",
+      "connections": [
+        {"relation": "contradicts", "note": "21-a"},
+        {"relation": "refines", "atom": 0}
+      ]
     }
   ]
 }
@@ -145,6 +171,8 @@ Rules for the JSON: `atoms` may be empty if nothing passes the relevance test.
 Give 2–3 `variants` per atom. Set **at most one** of `link_after`, `continues`,
 `new_thread`. Use `null` for what you cannot determine — never invent an ID, and
 never reference a store ID that does not appear in the context you were given.
+`connections` may be an empty list; each entry carries exactly one of `note` or
+`atom`.
 
 ## Safety
 

@@ -970,3 +970,106 @@ def test_multi_repo_alone_is_enough_configuration(tmp_path, monkeypatch):
     assert config.configured() is True
     assert config.root_origin() == "SLIPBOX_REPOS"
     assert config.repo_root(None) == (tmp_path / "w").resolve()
+
+
+def test_the_plan_schema_has_a_slot_for_connections():
+    """The graph must be a field the model fills, not prose it must remember.
+
+    Two live stores held 21 atoms between them with zero body wikilinks and zero
+    typed connections, so `slipbox_backlinks` returned nothing for every note.
+    The contract had always asked for `contradicts [[id]]` in the body — but
+    there was no slot for it in the plan schema, and a schema outranks prose.
+    """
+    from slipbox import atomizer, notes as n
+
+    atom = atomizer.PLAN_SCHEMA["properties"]["atoms"]["items"]["properties"]
+    assert "connections" in atom
+    relation = atom["connections"]["items"]["properties"]["relation"]
+    assert set(relation["enum"]) == set(n.CONNECTION_VERBS)
+    # `source` is the citation and `variant_of` a reviewer's verdict — neither is
+    # the atomiser's to propose.
+    assert "source" not in relation["enum"] and "variant_of" not in relation["enum"]
+
+
+def test_connections_are_validated_not_trusted():
+    from slipbox import atomizer
+
+    good = [
+        {"relation": "contradicts", "note": "21-a"},
+        {"relation": "refines", "atom": 0},
+    ]
+    assert atomizer._connections(good, 1) == [
+        {"relation": "contradicts", "note": "21-a", "atom": None},
+        {"relation": "refines", "note": None, "atom": 0},
+    ]
+
+    # Each of these is dropped, and dropping is per-connection, not per-atom.
+    bad = [
+        {"relation": "invented", "note": "21-a"},      # not a reserved verb
+        {"relation": "source", "note": "21-a"},        # not the atomiser's to give
+        {"relation": "refines", "note": "not an id"},  # not a Folgezettel ID
+        {"relation": "refines"},                       # no target at all
+        {"relation": "refines", "note": "21-a", "atom": 0},  # ambiguous: both
+        {"relation": "refines", "atom": 5},            # a LATER atom — no ID yet
+        {"relation": "refines", "atom": 2},            # itself
+        {"relation": "refines", "atom": True},         # a bool is not an index
+        "not even an object",
+    ]
+    assert atomizer._connections(bad, 2) == []
+    assert atomizer._connections(None, 0) == []
+
+
+def test_connections_are_rendered_as_typed_wikilinks(repo):
+    """Rendered in the exact form `notes.typed_links` parses, so the read tools see them."""
+    from slipbox import atomizer
+
+    created = [{"proposed_id": "1"}, {"proposed_id": "1-a"}]
+    item = {
+        "body": "The claim, in full sentences.",
+        "connections": [
+            {"relation": "contradicts", "note": "7-b", "atom": None},
+            {"relation": "refines", "note": None, "atom": 1},
+            {"relation": "extends", "note": "9-z", "atom": None},   # not in the store
+            {"relation": "refines", "note": None, "atom": 9},       # not created yet
+        ],
+    }
+    body = atomizer._with_connections(item, created, known={"7-b"})
+
+    assert "contradicts [[7-b]]" in body        # an existing note
+    assert "refines [[1-a]]" in body            # a sibling, resolved to its proposed ID
+    assert "9-z" not in body                    # hallucinated target dropped
+    assert body.startswith("The claim, in full sentences.")
+
+    # And the parser the read tools use actually recognises them.
+    assert notes.typed_links(body) == [
+        {"verb": "refines", "target": "1-a"},
+        {"verb": "contradicts", "target": "7-b"},
+    ]
+    # An atom that genuinely stands alone is left exactly as written.
+    assert atomizer._with_connections(
+        {"body": "Alone.", "connections": []}, created, known=set()) == "Alone."
+
+
+def test_a_distilled_atom_lands_with_its_links_in_the_body(repo):
+    """End to end through the plan mechanics: plan -> stage note carrying the graph."""
+    from slipbox import atomizer
+
+    ops.persist(ops.create_atom("Head", "b", candidates=["new-thread"],
+                                root=repo)["path"], root=repo)   # store/1 exists
+    src = ops.create_source("A source", source_type="article", root=repo)
+    plan = atomizer._validate({
+        "source": {"title": "A source", "summary": "s"},
+        "atoms": [
+            {"title": "First", "body": "The opening claim.", "new_thread": True},
+            {"title": "Second", "body": "The opposing claim.", "continues": 0,
+             "connections": [{"relation": "contradicts", "note": "1"},
+                             {"relation": "refines", "atom": 0}]},
+        ],
+    })
+    assert plan["atoms"][1]["connections"][0]["note"] == "1"
+
+    created = atomizer._create_atoms(plan["atoms"], f"[[{src['path'][:-3]}]]", repo)
+    second = notes.load(repo, created[1]["path"])
+    assert "contradicts [[1]]" in second.body
+    assert f"refines [[{created[0]['proposed_id']}]]" in second.body
+    assert {l["verb"] for l in notes.typed_links(second.body)} == {"contradicts", "refines"}
